@@ -156,6 +156,31 @@ UTILITY_GENERATE_ENUM(LodModel,
                       ((none))
                       )
 
+struct Cardinality {
+    int min;
+    int max;
+
+    Cardinality(int min = 0, int max = 0) : min(min), max(max) {}
+};
+
+UTILITY_GENERATE_ENUM(IndexSchemeName,
+                      ((esriRTree)("esriRTree"))
+                      ((quadTree)("QuadTree"))
+                      ((agolTilingScheme)("AGOLTilingScheme"))
+                      )
+
+struct IndexScheme {
+    IndexSchemeName name;
+    bool inclusive;
+    int dimensionality;
+    Cardinality childrenCardinality;
+    Cardinality neighborCardinality;
+
+    IndexScheme()
+        : name(IndexSchemeName::esriRTree), inclusive(true), dimensionality(0)
+    {}
+};
+
 struct Store {
     std::string id;
     Profile profile;
@@ -163,7 +188,7 @@ struct Store {
     std::vector<ResourcePattern> resourcePattern;
     std::string rootNode;
     std::string version;
-    math::Extents2 extent;
+    math::Extents2 extents;
     std::string indexCRS;
     std::string vertexCRS;
     NormalReferenceFrame normalReferenceFrame;
@@ -173,7 +198,7 @@ struct Store {
     std::vector<std::string> textureEncoding;
     LodType lodType;
     LodModel lodModel;
-    // TODO: indexingScheme
+    IndexScheme indexingScheme;
     // TODO: defaultGeometrySchema
     // TODO: defaultTextureDefinition
     // TODO: defaultMaterialDefinition

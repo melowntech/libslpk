@@ -114,6 +114,61 @@ void parse(HeightModelInfo &hmi, const Json::Value &value)
     Json::get(hmi.heightUnit, value, "heightUnit");
 }
 
+void parse(Cardinality &c, const Json::Value &value, const char *name)
+{
+    get(c.min, value, 0, name);
+    get(c.max, value, 1, name);
+}
+
+void parse(IndexScheme &is, const Json::Value &value)
+{
+    Json::get(is.name, value, "name");
+    Json::get(is.inclusive, value, "inclusive");
+    Json::get(is.dimensionality, value, "dimensionality");
+    parse(is.childrenCardinality
+          , Json::check(value["childrenCardinality"]
+                        , Json::arrayValue, "childrenCardinality")
+          , "childrenCardinality");
+    if (value.isMember("neighborCardinality")) {
+        parse(is.neighborCardinality
+              , Json::check(value["neighborCardinality"]
+                            , Json::arrayValue, "neighborCardinality")
+              ,  "neighborCardinality");
+    }
+}
+
+void parse(Store &s, const Json::Value &value)
+{
+    Json::get(s.id, value, "id");
+    Json::get(s.profile, value, "profile");
+    Json::get(s.resourcePattern, value, "resourcePattern");
+    Json::get(s.rootNode, value, "rootNode");
+    Json::get(s.version, value, "version");
+
+    Json::get(s.extents.ll(0), value, "extent", 0);
+    Json::get(s.extents.ll(1), value, "extent", 1);
+    Json::get(s.extents.ur(0), value, "extent", 2);
+    Json::get(s.extents.ur(1), value, "extent", 3);
+
+    Json::get(s.indexCRS, value, "indexCRS");
+    Json::get(s.vertexCRS, value, "vertexCRS");
+    Json::getOpt(s.normalReferenceFrame, value, "normalReferenceFrame");
+    Json::getOpt(s.nidEncoding, value, "nidEncoding");
+    Json::getOpt(s.featureEncoding, value, "featureEncoding");
+    Json::getOpt(s.geometryEncoding, value, "geometryEncoding");
+    Json::get(s.textureEncoding, value, "textureEncoding");
+    Json::getOpt(s.lodType, value, "lodType");
+    Json::getOpt(s.lodModel, value, "lodModel");
+
+    parse(s.indexingScheme
+          , Json::check(value["indexingScheme"]
+                        , Json::objectValue, "indexingScheme"));
+
+    // TODO: defaultGeometrySchema
+    // TODO: defaultTextureDefinition
+    // TODO: defaultMaterialDefinition
+}
+
 SceneLayerInfo loadSceneLayerInfo(std::istream &in, const fs::path &path)
 {
     LOG(info1) << "Loading SLPK 3d scene layer info from " << path  << ".";
@@ -135,6 +190,9 @@ SceneLayerInfo loadSceneLayerInfo(std::istream &in, const fs::path &path)
               , Json::check(value["heightModelInfo"]
                             , Json::objectValue, "heightModelInfo"));
     }
+
+    parse(sli.store
+          , Json::check(value["store"], Json::objectValue, "store"));
 
     return sli;
 }
