@@ -42,6 +42,8 @@
 
 #include "utility/enum-io.hpp"
 
+#include "geo/srsdef.hpp"
+
 namespace slpk {
 
 UTILITY_GENERATE_ENUM(FolderPattern,
@@ -89,7 +91,7 @@ UTILITY_GENERATE_ENUM(LayerType,
                       ((polygon)("Polygon"))
                       ((object)("3DObject"))
                       ((integratedMesh)("IntegratedMesh"))
-                      ((Pointcloud)("pointcloud"))
+                      ((pointcloud)("Pointcloud"))
                       )
 
 struct SpatialReference {
@@ -98,6 +100,10 @@ struct SpatialReference {
     int vcsWkid;
     int latestVcsWkid;
     std::string wkt;
+
+    SpatialReference() : wkid(), latestWkid(), vcsWkid(), latestVcsWkid() {}
+
+    geo::SrsDefinition srs() const;
 };
 
 UTILITY_GENERATE_ENUM(HeightModel,
@@ -113,6 +119,73 @@ struct HeightModelInfo {
     HeightModelInfo() : heightModel(HeightModel::orthometric) {}
 };
 
+UTILITY_GENERATE_ENUM(Profile,
+                      ((meshes))
+                      ((polygons))
+                      ((points))
+                      ((lines))
+                      ((analytics))
+                      ((meshpyramids))
+                      ((pointclouds))
+                      ((symbols))
+                      )
+
+UTILITY_GENERATE_ENUM(ResourcePattern,
+                      ((nodeIndexDocument)("3dNodeIndexDocument"))
+                      ((sharedResource)("SharedResource"))
+                      ((featureData)("FeatureData"))
+                      ((geometry)("Geometry"))
+                      ((texture)("Texture"))
+                      )
+
+UTILITY_GENERATE_ENUM(NormalReferenceFrame,
+                      ((eastNorthUp)("east-north-up"))
+                      ((earthCentered)("earth-centered"))
+                      ((vertexReferenceFrame)("vertex-reference-frame"))
+                      )
+
+UTILITY_GENERATE_ENUM(LodType,
+                      ((meshPyramid)("MeshPyramid"))
+                      ((thinning)("Thinning"))
+                      ((clustering)("Clustering"))
+                      ((generalizing)("Generalizing"))
+                      )
+
+UTILITY_GENERATE_ENUM(LodModel,
+                      ((nodeSwitching)("node-switching"))
+                      ((none))
+                      )
+
+struct Store {
+    std::string id;
+    Profile profile;
+
+    std::vector<ResourcePattern> resourcePattern;
+    std::string rootNode;
+    std::string version;
+    math::Extents2 extent;
+    std::string indexCRS;
+    std::string vertexCRS;
+    NormalReferenceFrame normalReferenceFrame;
+    std::string nidEncoding;
+    std::string featureEncoding;
+    std::string geometryEncoding;
+    std::vector<std::string> textureEncoding;
+    LodType lodType;
+    LodModel lodModel;
+    // TODO: indexingScheme
+    // TODO: defaultGeometrySchema
+    // TODO: defaultTextureDefinition
+    // TODO: defaultMaterialDefinition
+
+    Store()
+        : profile(Profile::meshpyramids)
+        , normalReferenceFrame(NormalReferenceFrame::earthCentered)
+        , lodType(LodType::meshPyramid)
+        , lodModel(LodModel::nodeSwitching)
+    {}
+};
+
 struct SceneLayerInfo {
     int id;
     LayerType layerType;
@@ -123,6 +196,8 @@ struct SceneLayerInfo {
     boost::optional<std::string> alias;
     boost::optional<std::string> description;
     boost::optional<std::string> copyrightText;
+
+    Store store;
 
     // capabilities
     // cachedDrawingInfo

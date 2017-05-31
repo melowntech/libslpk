@@ -98,6 +98,22 @@ Metadata loadMetadata(const roarchive::IStream::pointer &in)
     return loadMetadata(in->get(), in->path());
 }
 
+void parse(SpatialReference &srs, const Json::Value &value)
+{
+    Json::getOpt(srs.wkid, value, "layerType");
+    Json::getOpt(srs.latestWkid, value, "latestWkid");
+    Json::getOpt(srs.vcsWkid, value, "vcsWkid");
+    Json::getOpt(srs.latestVcsWkid, value, "latestVcsWkid");
+    Json::getOpt(srs.wkt, value, "wkt");
+}
+
+void parse(HeightModelInfo &hmi, const Json::Value &value)
+{
+    Json::get(hmi.heightModel, value, "heightModel");
+    Json::get(hmi.ellipsoid, value, "ellipsoid");
+    Json::get(hmi.heightUnit, value, "heightUnit");
+}
+
 SceneLayerInfo loadSceneLayerInfo(std::istream &in, const fs::path &path)
 {
     LOG(info1) << "Loading SLPK 3d scene layer info from " << path  << ".";
@@ -106,7 +122,19 @@ SceneLayerInfo loadSceneLayerInfo(std::istream &in, const fs::path &path)
 
     SceneLayerInfo sli;
 
-    (void) value;
+    Json::get(sli.id, value, "id");
+    Json::get(sli.layerType, value, "layerType");
+
+    // spatial reference:
+    parse(sli.spatialReference
+          , Json::check(value["spatialReference"]
+                        , Json::objectValue, "spatialReference"));
+
+    if (value.isMember("heightModelInfo")) {
+        parse(sli.heightModelInfo
+              , Json::check(value["heightModelInfo"]
+                            , Json::objectValue, "heightModelInfo"));
+    }
 
     return sli;
 }
@@ -148,6 +176,23 @@ Archive::istream(const boost::filesystem::path &path)
     LOGTHROW(err1, std::runtime_error)
         << "Invalid ResourceCompressionType in metadata.";
     throw;
+}
+
+geo::SrsDefinition SpatialReference::srs() const
+{
+    // use WKT if available
+    if (!wkt.empty()) {
+        return geo::SrsDefinition(wkt, geo::SrsDefinition::Type::wkt);
+    }
+
+    // construct from wkid
+    if (!vcsWkid) {
+        // just EPSG id
+        return geo::SrsDefinition(wkid);
+    }
+
+    // combined
+    return geo::SrsDefinition(wkid, vcsWkid);
 }
 
 } // namespace slpk
