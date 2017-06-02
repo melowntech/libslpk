@@ -23,7 +23,9 @@
  * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGE.
  */
+
 #include <map>
+#include <string>
 #include <fstream>
 
 #include <boost/filesystem.hpp>
@@ -137,6 +139,93 @@ void parse(IndexScheme &is, const Json::Value &value)
     }
 }
 
+void parse(HeaderAttribute::list &hal, const Json::Value &value)
+{
+    for (const auto &item : value) {
+        hal.emplace_back();
+        auto &ha(hal.back());
+        Json::get(ha.property, item, "property");
+        Json::get(ha.type, item, "type");
+    }
+}
+
+void parse(GeometryAttribute &ga, const Json::Value &value)
+{
+    // TODO: byteOffset
+    // TODO: count
+    Json::get(ga.valueType, value, "valueType");
+    Json::get(ga.valuesPerElement, value, "valuesPerElement");
+    // TODO: values
+    // TODO: componentIndices
+}
+
+void parse(GeometryAttribute::list &gal
+           , const std::string &attrName, const std::string &orderName
+           , const Json::Value &attrs, const Json::Value &order)
+{
+    // build indexing map
+    gal.clear();
+    gal.reserve(order.size());
+    std::map<std::string, GeometryAttribute*> attrMap;
+
+    for (const auto &key : order) {
+        gal.emplace_back(key.asString());
+        auto &ga(gal.back());
+        attrMap[ga.key] = &ga;
+    }
+
+    // process all keys from attributes
+    for (const auto &key : attrs.getMemberNames()) {
+        auto fattrMap(attrMap.find(key));
+        if (fattrMap == attrMap.end()) {
+            LOG(warn2)
+                << "Format inconsistency: unexpected attribute \""
+                << key << "\" in \"" << attrName
+                << "\" which is not present in \""
+                << orderName << "\"; skipping.";
+            continue;
+        }
+
+        parse(*fattrMap->second
+              , Json::check(attrs[key], Json::objectValue, key.c_str()));
+    }
+}
+
+void parse(GeometryAttribute::list &gal, const Json::Value &value
+           , const std::string &attrName, const std::string &orderName)
+{
+    if (!value.isMember(attrName)) { return; }
+    if (!value.isMember(orderName)) {
+        LOGTHROW(err1, Json::RuntimeError)
+            << "Missing \"" << orderName << "\" for \"" << attrName << "\".";
+    }
+
+    parse(gal, attrName, orderName
+          , Json::check(value[attrName], Json::objectValue, attrName.c_str())
+          , Json::check(value[orderName], Json::arrayValue, orderName.c_str())
+          );
+}
+
+void parse(GeometrySchema &gs, const Json::Value &value)
+{
+    Json::get(gs.geometryType, value, "geometryType");
+    Json::get(gs.topology, value, "topology");
+
+    if (value.isMember("header")) {
+        parse(gs.header
+              , Json::check(value["header"], Json::arrayValue, "header"));
+    }
+
+    // load ordering
+    parse(gs.vertexAttributes, value
+          , "vertexAttributes", "ordering");
+
+    // TODO: faces
+
+    parse(gs.vertexAttributes, value
+          , "featureAttributes", "featureAttributeOrder");
+}
+
 void parse(Store &s, const Json::Value &value)
 {
     Json::get(s.id, value, "id");
@@ -164,7 +253,13 @@ void parse(Store &s, const Json::Value &value)
           , Json::check(value["indexingScheme"]
                         , Json::objectValue, "indexingScheme"));
 
-    // TODO: defaultGeometrySchema
+    if (value.isMember("defaultGeometrySchema")) {
+        s.defaultGeometrySchema = boost::in_place();
+        parse(*s.defaultGeometrySchema
+              , Json::check(value["defaultGeometrySchema"]
+                            , Json::objectValue, "defaultGeometrySchema"));
+    }
+
     // TODO: defaultTextureDefinition
     // TODO: defaultMaterialDefinition
 }

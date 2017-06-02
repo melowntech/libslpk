@@ -181,6 +181,79 @@ struct IndexScheme {
     {}
 };
 
+UTILITY_GENERATE_ENUM(GeometryType,
+                      ((triangles))
+                      ((lines))
+                      ((points))
+                      )
+
+UTILITY_GENERATE_ENUM(Topology,
+                      ((perAttributeArray)("PerAttributeArray"))
+                      ((indexed)("Indexed"))
+                      )
+
+UTILITY_GENERATE_ENUM(DataType,
+                      ((uint8)("UInt8"))
+                      ((uint16)("UInt16"))
+                      ((uint32)("UInt32"))
+                      ((uint64)("UInt64"))
+                      ((int8)("Int8"))
+                      ((int16)("Int16"))
+                      ((int32)("Int32"))
+                      ((int64)("Int64"))
+                      ((float32)("Float32"))
+                      ((float64)("Float64"))
+                      )
+
+struct HeaderAttribute {
+    std::string property;
+    DataType type;
+
+    typedef std::vector<HeaderAttribute> list;
+
+    HeaderAttribute(const std::string &property = ""
+                    , DataType type = DataType())
+        : property(property), type(type)
+    {}
+};
+
+struct GeometryAttribute {
+    // key from original dictionary
+    std::string key;
+    // TODO: byteOffset
+    // TODO: count
+    DataType valueType;
+    std::uint16_t valuesPerElement;
+    // TODO: values
+    std::vector<int> componentIndices;
+
+    GeometryAttribute(const std::string &key)
+        : key(key), valueType(), valuesPerElement()
+    {}
+
+    typedef std::vector<GeometryAttribute> list;
+};
+
+struct GeometrySchema {
+    GeometryType geometryType;
+    Topology topology;
+    HeaderAttribute::list header;
+
+    /** Sorted by `ordering`. Ordering is not present here.
+     */
+    GeometryAttribute::list vertexAttributes;
+
+    // TODO: faces
+
+    /** Sorted by `featureAttributeOrder`. Ordering is not present here.
+     */
+    GeometryAttribute::list featureAttributes;
+
+    GeometrySchema()
+        : geometryType(), topology(Topology::perAttributeArray)
+    {}
+};
+
 struct Store {
     std::string id;
     Profile profile;
@@ -199,7 +272,7 @@ struct Store {
     LodType lodType;
     LodModel lodModel;
     IndexScheme indexingScheme;
-    // TODO: defaultGeometrySchema
+    boost::optional<GeometrySchema> defaultGeometrySchema;
     // TODO: defaultTextureDefinition
     // TODO: defaultMaterialDefinition
 
