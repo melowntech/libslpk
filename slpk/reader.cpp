@@ -37,6 +37,7 @@
 #include "utility/path.hpp"
 #include "utility/streams.hpp"
 #include "utility/path.hpp"
+#include "utility/uri.hpp"
 
 #include "jsoncpp/json.hpp"
 #include "jsoncpp/as.hpp"
@@ -54,8 +55,30 @@ namespace {
 namespace constants {
 const std::string MetadataName("metadata.json");
 const std::string SceneLayer("3dSceneLayer.json");
+const std::string NodeIndex("3dNodeIndexDocument.json");
 const boost::filesystem::path gzExt(".gz");
 } // namespace constants
+
+
+std::string joinPaths(const std::string &a, const std::string &b)
+{
+    if (a.empty()) { return utility::Uri::removeDotSegments(b); }
+    return utility::Uri::joinAndRemoveDotSegments(a, b);
+}
+
+std::string makeDir(const std::string &path)
+{
+    if (path.empty()) { return path; }
+    if (path[path.size() - 1] == '/') { return path; }
+    return path + "/";
+}
+
+void makeDirInplace(std::string &path)
+{
+    if (!path.empty() && (path[path.size() - 1] != '/')) {
+        path.push_back('/');
+    }
+}
 
 Metadata loadMetadata(std::istream &in, const fs::path &path)
 {
@@ -297,16 +320,60 @@ SceneLayerInfo loadSceneLayerInfo(const roarchive::IStream::pointer &in)
     return loadSceneLayerInfo(in->get(), in->path());
 }
 
+NodeIndex loadNodeIndex(std::istream &in, const fs::path &path)
+{
+    LOG(info1) << "Loading SLPK 3d node index document from " << path  << ".";
+
+    NodeIndex ni;
+    (void) in;
+    (void) path;
+    return ni;
+}
+
+NodeIndex loadNodeIndex(const roarchive::IStream::pointer &istream)
+{
+    return loadNodeIndex(istream->get(), istream->path());
+}
+
 } // namespace
+
+geo::SrsDefinition SpatialReference::srs() const
+{
+    // use WKT if available
+    if (!wkt.empty()) {
+        return geo::SrsDefinition(wkt, geo::SrsDefinition::Type::wkt);
+    }
+
+    // construct from wkid
+    if (!vcsWkid) {
+        // just EPSG id
+        return geo::SrsDefinition(wkid);
+    }
+
+    // combined
+    return geo::SrsDefinition(wkid, vcsWkid);
+}
+
+void Store::absolutize(const std::string &cwd)
+{
+    rootNode = joinPaths(cwd, makeDir(rootNode));
+}
+
+void SceneLayerInfo::absolutize(const std::string &cwd)
+{
+    store.absolutize(cwd);
+}
 
 Archive::Archive(const fs::path &root)
     : archive_(root, constants::MetadataName)
     , metadata_(loadMetadata(archive_.istream(constants::MetadataName)))
     , sli_(loadSceneLayerInfo(istream(constants::SceneLayer)))
-{}
+{
+    sli_.absolutize();
+}
 
 roarchive::IStream::pointer
-Archive::istream(const boost::filesystem::path &path)
+Archive::istream(const boost::filesystem::path &path) const
 {
     switch (metadata_.resourceCompressionType) {
     case ResourceCompressionType::none:
@@ -331,21 +398,15 @@ Archive::istream(const boost::filesystem::path &path)
     throw;
 }
 
-geo::SrsDefinition SpatialReference::srs() const
+NodeIndex Archive::loadNodeIndex(const boost::filesystem::path &dir) const
 {
-    // use WKT if available
-    if (!wkt.empty()) {
-        return geo::SrsDefinition(wkt, geo::SrsDefinition::Type::wkt);
-    }
+    return slpk::loadNodeIndex
+        (istream(joinPaths(dir.string(), constants::NodeIndex)));
+}
 
-    // construct from wkid
-    if (!vcsWkid) {
-        // just EPSG id
-        return geo::SrsDefinition(wkid);
-    }
-
-    // combined
-    return geo::SrsDefinition(wkid, vcsWkid);
+NodeIndex Archive::loadRootNodeIndex() const
+{
+    return loadNodeIndex(sli_.store.rootNode);
 }
 
 } // namespace slpk

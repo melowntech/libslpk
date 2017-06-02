@@ -282,6 +282,8 @@ struct Store {
         , lodType(LodType::meshPyramid)
         , lodModel(LodModel::nodeSwitching)
     {}
+
+    void absolutize(const std::string &cwd = "");
 };
 
 struct SceneLayerInfo {
@@ -302,6 +304,95 @@ struct SceneLayerInfo {
     // drawingInfo
     // fields
     // attributeStorageInfo
+
+    SceneLayerInfo() : id() , layerType(LayerType::object) {}
+
+    void absolutize(const std::string &cwd = "");
+};
+
+struct MeabBoundingSphere {
+    double x;
+    double y;
+    double z;
+    double r;
+};
+
+struct NodeReference {
+    std::string id;
+    MeabBoundingSphere mbs;
+    std::string href;
+    std::string version;
+    int featureCount;
+
+    typedef std::vector<NodeReference> list;
+};
+
+struct FeatureRange {
+    int min;
+    int max;
+
+    FeatureRange(int min = 0, int max = 0) : min(min), max(max) {}
+};
+
+struct Resource {
+    std::string href;
+    std::vector<std::string> layerContent;
+    FeatureRange featureRange;
+    bool multiTextureBundle;
+    int vertexElements;
+    int faceElements;
+
+    Resource() : multiTextureBundle(), vertexElements(), faceElements() {}
+
+    typedef std::vector<NodeReference> list;
+};
+
+UTILITY_GENERATE_ENUM(MetricType,
+                      ((maxScreenThreshold))
+                      ((screenSpaceRelative))
+                      ((distanceRangeFromDefaultCamera))
+                      )
+
+struct LodSelection {
+    MetricType metricType;
+    double maxValue;
+    double avgValue;
+    double minValue;
+
+    LodSelection() : maxValue(), avgValue(), minValue() {}
+};
+
+struct Feature {
+    int id;
+    MeabBoundingSphere mbs;
+    int lodChildFeatures;
+    std::vector<std::string> lodChildNodes;
+    int rank;
+    std::string rootFeature;
+
+    typedef std::vector<Feature> list;
+
+    Feature() : id(), lodChildFeatures(), rank() {}
+};
+
+struct NodeIndex {
+    std::string id;
+    int level;
+    std::string version;
+    MeabBoundingSphere mbs;
+    boost::optional<std::time_t> created;
+    boost::optional<std::time_t> expires;
+    boost::optional<math::Matrix4> transform;
+    boost::optional<NodeReference> parentNode;
+    NodeReference::list children;
+    NodeReference::list neighbors;
+
+    boost::optional<Resource> sharedResource;
+    Resource::list featureData;
+    Resource::list geometryData;
+    Resource::list textureData;
+    boost::optional<LodSelection> lodSelection;
+    Feature::list features;
 };
 
 } // namespace slpk

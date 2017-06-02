@@ -39,7 +39,13 @@ public:
     Archive(const boost::filesystem::path &root);
 
     roarchive::IStream::pointer
-    istream(const boost::filesystem::path &path);
+    istream(const boost::filesystem::path &path) const;
+
+    const SceneLayerInfo& sceneLayerInfo() const { return sli_; }
+
+    NodeIndex loadNodeIndex(const boost::filesystem::path &dir) const;
+
+    NodeIndex loadRootNodeIndex() const;
 
 private:
     roarchive::RoArchive archive_;
