@@ -26,6 +26,7 @@
 #ifndef slpk_types_hpp_included_
 #define slpk_types_hpp_included_
 
+#include <map>
 #include <cstddef>
 
 // Please, don't ask...
@@ -254,6 +255,15 @@ struct GeometrySchema {
     {}
 };
 
+struct Encoding {
+    std::string mime;
+    std::string ext;
+
+    typedef std::vector<Encoding> list;
+
+    Encoding() = default;
+};
+
 struct Store {
     std::string id;
     Profile profile;
@@ -265,10 +275,10 @@ struct Store {
     std::string indexCRS;
     std::string vertexCRS;
     NormalReferenceFrame normalReferenceFrame;
-    std::string nidEncoding;
-    std::string featureEncoding;
-    std::string geometryEncoding;
-    std::vector<std::string> textureEncoding;
+    Encoding nidEncoding;
+    Encoding featureEncoding;
+    Encoding geometryEncoding;
+    Encoding::list textureEncoding;
     LodType lodType;
     LodModel lodModel;
     IndexScheme indexingScheme;
@@ -310,7 +320,7 @@ struct SceneLayerInfo {
     void absolutize(const std::string &cwd = "");
 };
 
-struct MeabBoundingSphere {
+struct MeanBoundingSphere {
     double x;
     double y;
     double z;
@@ -319,7 +329,7 @@ struct MeabBoundingSphere {
 
 struct NodeReference {
     std::string id;
-    MeabBoundingSphere mbs;
+    MeanBoundingSphere mbs;
     std::string href;
     std::string version;
     int featureCount;
@@ -336,15 +346,17 @@ struct FeatureRange {
 
 struct Resource {
     std::string href;
+    const Encoding *encoding;
     std::vector<std::string> layerContent;
     FeatureRange featureRange;
     bool multiTextureBundle;
     int vertexElements;
     int faceElements;
 
-    Resource() : multiTextureBundle(), vertexElements(), faceElements() {}
+    Resource()
+        : encoding(), multiTextureBundle(), vertexElements(), faceElements() {}
 
-    typedef std::vector<NodeReference> list;
+    typedef std::vector<Resource> list;
 };
 
 UTILITY_GENERATE_ENUM(MetricType,
@@ -364,7 +376,7 @@ struct LodSelection {
 
 struct Feature {
     int id;
-    MeabBoundingSphere mbs;
+    MeanBoundingSphere mbs;
     int lodChildFeatures;
     std::vector<std::string> lodChildNodes;
     int rank;
@@ -375,11 +387,11 @@ struct Feature {
     Feature() : id(), lodChildFeatures(), rank() {}
 };
 
-struct NodeIndex {
+struct Node {
     std::string id;
     int level;
     std::string version;
-    MeabBoundingSphere mbs;
+    MeanBoundingSphere mbs;
     boost::optional<std::time_t> created;
     boost::optional<std::time_t> expires;
     boost::optional<math::Matrix4> transform;
@@ -393,6 +405,8 @@ struct NodeIndex {
     Resource::list textureData;
     boost::optional<LodSelection> lodSelection;
     Feature::list features;
+
+    typedef std::map<std::string, Node> map;
 };
 
 } // namespace slpk

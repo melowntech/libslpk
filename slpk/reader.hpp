@@ -43,9 +43,10 @@ public:
 
     const SceneLayerInfo& sceneLayerInfo() const { return sli_; }
 
-    NodeIndex loadNodeIndex(const boost::filesystem::path &dir) const;
+    Node loadNodeIndex(const boost::filesystem::path &dir) const;
+    Node loadRootNodeIndex() const;
 
-    NodeIndex loadRootNodeIndex() const;
+    Node::map loadTree() const;
 
 private:
     roarchive::RoArchive archive_;

@@ -25,12 +25,15 @@
  */
 
 #include <map>
+#include <queue>
 #include <string>
 #include <fstream>
 
 #include <boost/filesystem.hpp>
 #include <boost/lexical_cast.hpp>
+#include <boost/iostreams/filter/zlib.hpp>
 #include <boost/iostreams/filter/gzip.hpp>
+#include <boost/iostreams/copy.hpp>
 
 #include "dbglog/dbglog.hpp"
 
@@ -56,9 +59,36 @@ namespace constants {
 const std::string MetadataName("metadata.json");
 const std::string SceneLayer("3dSceneLayer.json");
 const std::string NodeIndex("3dNodeIndexDocument.json");
-const boost::filesystem::path gzExt(".gz");
+const fs::path gzExt(".gz");
 } // namespace constants
 
+typedef std::map<std::string, std::string> MIMEMapping;
+
+const MIMEMapping mimeMapping {
+    { "application/octet-stream", ".bin" }
+    , { "image/jpeg", ".jpg" }
+    , { "image/vnd-ms.dds", ".bin.dds" }
+};
+
+// must stay empty
+const std::string unknownMimeExt;
+
+const std::string &extFromMime(const std::string &mime) {
+    auto process([](const std::string &mime) -> const std::string&
+    {
+        auto fmimeMapping(mimeMapping.find(mime));
+        if (fmimeMapping == mimeMapping.end()) {
+            return unknownMimeExt;
+        }
+        return fmimeMapping->second;
+    });
+
+    auto sc(mime.find(';'));
+    if (sc == std::string::npos) {
+        return process(mime);
+    }
+    return process(mime.substr(0, sc));
+}
 
 std::string joinPaths(const std::string &a, const std::string &b)
 {
@@ -249,6 +279,26 @@ void parse(GeometrySchema &gs, const Json::Value &value)
           , "featureAttributes", "featureAttributeOrder");
 }
 
+void parse(Encoding &encoding, const Json::Value &value, const char *key)
+{
+    if (value.isMember(key)) {
+        Json::get(encoding.mime, value, key);
+        encoding.ext = extFromMime(encoding.mime);
+    }
+}
+
+void parse(Encoding::list &el, const Json::Value &value
+           , const char *key)
+{
+    if (!value.isMember(key)) { return; }
+    for (const auto &item : Json::check(value[key], Json::arrayValue, key)) {
+        el.emplace_back();
+        auto &encoding(el.back());
+        encoding.mime = item.asString();
+        encoding.ext = extFromMime(encoding.mime);
+    }
+}
+
 void parse(Store &s, const Json::Value &value)
 {
     Json::get(s.id, value, "id");
@@ -265,10 +315,12 @@ void parse(Store &s, const Json::Value &value)
     Json::get(s.indexCRS, value, "indexCRS");
     Json::get(s.vertexCRS, value, "vertexCRS");
     Json::getOpt(s.normalReferenceFrame, value, "normalReferenceFrame");
-    Json::getOpt(s.nidEncoding, value, "nidEncoding");
-    Json::getOpt(s.featureEncoding, value, "featureEncoding");
-    Json::getOpt(s.geometryEncoding, value, "geometryEncoding");
-    Json::get(s.textureEncoding, value, "textureEncoding");
+
+    parse(s.nidEncoding, value, "nidEncoding");
+    parse(s.featureEncoding, value, "featureEncoding");
+    parse(s.geometryEncoding, value, "geometryEncoding");
+    parse(s.textureEncoding, value, "textureEncoding");
+
     Json::getOpt(s.lodType, value, "lodType");
     Json::getOpt(s.lodModel, value, "lodModel");
 
@@ -320,19 +372,119 @@ SceneLayerInfo loadSceneLayerInfo(const roarchive::IStream::pointer &in)
     return loadSceneLayerInfo(in->get(), in->path());
 }
 
-NodeIndex loadNodeIndex(std::istream &in, const fs::path &path)
+
+void parse(NodeReference &nr, const Json::Value &value, const std::string &dir)
+{
+    Json::get(nr.id, value, "id");
+    // mbs
+    Json::get(nr.href, value, "href");
+    nr.href = joinPaths(dir, makeDir(nr.href));
+    // version
+    // featureCount
+}
+
+void parse(NodeReference::list &nrl, const Json::Value &value
+           , const std::string &dir)
+{
+    for (const auto &item : value) {
+        nrl.emplace_back();
+        parse(nrl.back(), item, dir);
+    }
+}
+
+void parse(Resource &r, const Json::Value &value, const std::string &dir
+           , const Encoding &encoding)
+{
+    Json::get(r.href, value, "href");
+    r.href = joinPaths(dir, r.href);
+    r.encoding = &encoding;
+    // layerContent
+    // featureRange
+    // multiTextureBundle
+    // vertexElements
+    // faceElements
+}
+
+void parse(Resource::list &rl, const Json::Value &value
+           , const std::string &dir
+           , const Encoding::list &encodings)
+{
+    // TODO: check encodings size
+    auto iencodings(encodings.begin());
+    for (const auto &item : value) {
+        rl.emplace_back();
+        parse(rl.back(), item, dir, *iencodings++);
+    }
+}
+
+void parse(Resource::list &rl, const Json::Value &value
+           , const std::string &dir
+           , const Encoding &encoding)
+{
+    for (const auto &item : value) {
+        rl.emplace_back();
+        parse(rl.back(), item, dir, encoding);
+    }
+}
+
+Node loadNodeIndex(std::istream &in, const fs::path &path
+                   , const std::string &dir, const Store &store)
 {
     LOG(info1) << "Loading SLPK 3d node index document from " << path  << ".";
+    const auto value(Json::read(in, path, "SLPK 3d Node Index Document"));
 
-    NodeIndex ni;
-    (void) in;
-    (void) path;
+    Node ni;
+    Json::get(ni.id, value, "id");
+    Json::get(ni.level, value, "level");
+
+    if (value.isMember("parentNode")) {
+        ni.parentNode = boost::in_place();
+        parse(*ni.parentNode
+              , Json::check(value["parentNode"], Json::objectValue
+                            , "parentNode")
+              , dir);
+    }
+
+    if (value.isMember("children")) {
+        parse(ni.children
+              , Json::check(value["children"], Json::arrayValue, "children")
+              , dir);
+    }
+
+    if (value.isMember("neighbors")) {
+        parse(ni.neighbors
+              , Json::check(value["neighbors"], Json::arrayValue, "neighbors")
+              , dir);
+    }
+
+    if (value.isMember("featureData")) {
+        parse(ni.featureData
+              , Json::check(value["featureData"], Json::arrayValue
+                            , "featureData")
+              , dir, store.featureEncoding);
+    }
+
+    if (value.isMember("geometryData")) {
+        parse(ni.geometryData
+              , Json::check(value["geometryData"], Json::arrayValue
+                            , "geometryData")
+              , dir, store.geometryEncoding);
+    }
+
+    if (value.isMember("textureData")) {
+        parse(ni.textureData
+              , Json::check(value["textureData"], Json::arrayValue
+                            , "textureData")
+              , dir, store.textureEncoding);
+    }
+
     return ni;
 }
 
-NodeIndex loadNodeIndex(const roarchive::IStream::pointer &istream)
+Node loadNodeIndex(const roarchive::IStream::pointer &istream
+                   , const std::string &dir, const Store &store)
 {
-    return loadNodeIndex(istream->get(), istream->path());
+    return loadNodeIndex(istream->get(), istream->path(), dir, store);
 }
 
 } // namespace
@@ -372,8 +524,7 @@ Archive::Archive(const fs::path &root)
     sli_.absolutize();
 }
 
-roarchive::IStream::pointer
-Archive::istream(const boost::filesystem::path &path) const
+roarchive::IStream::pointer Archive::istream(const fs::path &path) const
 {
     switch (metadata_.resourceCompressionType) {
     case ResourceCompressionType::none:
@@ -385,7 +536,15 @@ Archive::istream(const boost::filesystem::path &path) const
             // gz path exists
             return archive_.istream
                 (gzPath, [](bio::filtering_istream &fis) {
+#if 1
+                    // use raw zlib decompressor, tell zlib to autodetect gzip
+                    // header
+                    bio::zlib_params p;
+                    p.window_bits |= 16;
+                    fis.push(bio::zlib_decompressor(p));
+#else
                     fis.push(bio::gzip_decompressor());
+#endif
                 });
         }
 
@@ -398,15 +557,48 @@ Archive::istream(const boost::filesystem::path &path) const
     throw;
 }
 
-NodeIndex Archive::loadNodeIndex(const boost::filesystem::path &dir) const
+Node Archive::loadNodeIndex(const fs::path &dir) const
 {
+#if 0
+    LOG(info4) << "loading: " << dir;
+    std::ostringstream os;
+    bio::copy
+        (istream(joinPaths(dir.string(), constants::NodeIndex))->get(), os);
+    LOG(info4) << os.str();
+#endif
+
     return slpk::loadNodeIndex
-        (istream(joinPaths(dir.string(), constants::NodeIndex)));
+        (istream(joinPaths(dir.string(), constants::NodeIndex))
+         , dir.string(), sli_.store);
 }
 
-NodeIndex Archive::loadRootNodeIndex() const
+Node Archive::loadRootNodeIndex() const
 {
     return loadNodeIndex(sli_.store.rootNode);
+}
+
+Node::map Archive::loadTree() const
+{
+    Node::map nodes;
+
+    std::queue<const NodeReference*> queue;
+    auto add([&](Node node)
+    {
+        auto res(nodes.insert(Node::map::value_type
+                              (node.id, std::move(node))));
+        for (const auto &child : res.first->second.children) {
+            queue.push(&child);
+        }
+    });
+
+    add(loadRootNodeIndex());
+
+    while (!queue.empty()) {
+        add(loadNodeIndex(queue.front()->href));
+        queue.pop();
+    }
+
+    return nodes;
 }
 
 } // namespace slpk
