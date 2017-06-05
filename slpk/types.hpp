@@ -26,8 +26,9 @@
 #ifndef slpk_types_hpp_included_
 #define slpk_types_hpp_included_
 
-#include <map>
 #include <cstddef>
+#include <map>
+#include <memory>
 
 // Please, don't ask...
 #ifdef __GNUC__
@@ -294,6 +295,8 @@ struct Store {
     {}
 
     void absolutize(const std::string &cwd = "");
+
+    typedef std::shared_ptr<Store> pointer;
 };
 
 struct SceneLayerInfo {
@@ -307,7 +310,7 @@ struct SceneLayerInfo {
     boost::optional<std::string> description;
     boost::optional<std::string> copyrightText;
 
-    Store store;
+    Store::pointer store;
 
     // capabilities
     // cachedDrawingInfo
@@ -388,6 +391,7 @@ struct Feature {
 };
 
 struct Node {
+
     std::string id;
     int level;
     std::string version;
@@ -406,7 +410,15 @@ struct Node {
     boost::optional<LodSelection> lodSelection;
     Feature::list features;
 
+    Node(const Store::pointer &store) : store_(store) {}
+    const Store& store() const { return *store_; }
+
     typedef std::map<std::string, Node> map;
+
+private:
+    /** Reference to shared store.
+     */
+    Store::pointer store_;
 };
 
 } // namespace slpk

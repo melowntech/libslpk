@@ -2,7 +2,8 @@
 set(slpk_VERSION 1.0)
 
 define_module(LIBRARY slpk=${slpk_VERSION}
-  DEPENDS roarchive>=1.1 geo>=1.24 math>=1.2 utility>=1.11 dbglog>=1.4
+  DEPENDS roarchive>=1.1 geo>=1.24 geometry>=1.8
+  math>=1.2 utility>=1.11 dbglog>=1.4
   jsoncpp>=1.1
   Boost_FILESYSTEM
   )

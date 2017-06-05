@@ -27,10 +27,12 @@
 #define slpk_reader_hpp_included_
 
 #include "roarchive/roarchive.hpp"
+#include "geometry/mesh.hpp"
 
 #include "./types.hpp"
 
 namespace slpk {
+
 
 /** SLPK archive reader
  */
@@ -47,6 +49,8 @@ public:
     Node loadRootNodeIndex() const;
 
     Node::map loadTree() const;
+
+    geometry::Mesh::list loadGeometry(const Node &node);
 
 private:
     roarchive::RoArchive archive_;

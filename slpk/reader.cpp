@@ -361,7 +361,8 @@ SceneLayerInfo loadSceneLayerInfo(std::istream &in, const fs::path &path)
                             , Json::objectValue, "heightModelInfo"));
     }
 
-    parse(sli.store
+    sli.store = std::make_shared<Store>();
+    parse(*sli.store
           , Json::check(value["store"], Json::objectValue, "store"));
 
     return sli;
@@ -396,7 +397,7 @@ void parse(Resource &r, const Json::Value &value, const std::string &dir
            , const Encoding &encoding)
 {
     Json::get(r.href, value, "href");
-    r.href = joinPaths(dir, r.href);
+    r.href = joinPaths(dir, r.href + encoding.ext);
     r.encoding = &encoding;
     // layerContent
     // featureRange
@@ -428,12 +429,12 @@ void parse(Resource::list &rl, const Json::Value &value
 }
 
 Node loadNodeIndex(std::istream &in, const fs::path &path
-                   , const std::string &dir, const Store &store)
+                   , const std::string &dir, const Store::pointer &store)
 {
     LOG(info1) << "Loading SLPK 3d node index document from " << path  << ".";
     const auto value(Json::read(in, path, "SLPK 3d Node Index Document"));
 
-    Node ni;
+    Node ni(store);
     Json::get(ni.id, value, "id");
     Json::get(ni.level, value, "level");
 
@@ -461,30 +462,52 @@ Node loadNodeIndex(std::istream &in, const fs::path &path
         parse(ni.featureData
               , Json::check(value["featureData"], Json::arrayValue
                             , "featureData")
-              , dir, store.featureEncoding);
+              , dir, store->featureEncoding);
     }
 
     if (value.isMember("geometryData")) {
         parse(ni.geometryData
               , Json::check(value["geometryData"], Json::arrayValue
                             , "geometryData")
-              , dir, store.geometryEncoding);
+              , dir, store->geometryEncoding);
     }
 
     if (value.isMember("textureData")) {
         parse(ni.textureData
               , Json::check(value["textureData"], Json::arrayValue
                             , "textureData")
-              , dir, store.textureEncoding);
+              , dir, store->textureEncoding);
     }
 
     return ni;
 }
 
 Node loadNodeIndex(const roarchive::IStream::pointer &istream
-                   , const std::string &dir, const Store &store)
+                   , const std::string &dir, const Store::pointer &store)
 {
     return loadNodeIndex(istream->get(), istream->path(), dir, store);
+}
+
+geometry::Mesh loadMesh(const Node &node, const Resource &resource
+                        , std::istream &in, const fs::path &path)
+{
+    LOG(info1) << "Loading geometry from " << path  << ".";
+
+    const auto &store(node.store());
+
+    geometry::Mesh mesh;
+
+    return mesh;
+
+    (void) node;
+    (void) resource;
+    (void) in;
+}
+
+geometry::Mesh loadMesh(const Node &node, const Resource &resource
+                        , const roarchive::IStream::pointer &istream)
+{
+    return loadMesh(node, resource, istream->get(), istream->path());
 }
 
 } // namespace
@@ -513,7 +536,7 @@ void Store::absolutize(const std::string &cwd)
 
 void SceneLayerInfo::absolutize(const std::string &cwd)
 {
-    store.absolutize(cwd);
+    store->absolutize(cwd);
 }
 
 Archive::Archive(const fs::path &root)
@@ -574,7 +597,7 @@ Node Archive::loadNodeIndex(const fs::path &dir) const
 
 Node Archive::loadRootNodeIndex() const
 {
-    return loadNodeIndex(sli_.store.rootNode);
+    return loadNodeIndex(sli_.store->rootNode);
 }
 
 Node::map Archive::loadTree() const
@@ -599,6 +622,15 @@ Node::map Archive::loadTree() const
     }
 
     return nodes;
+}
+
+geometry::Mesh::list Archive::loadGeometry(const Node &node)
+{
+    geometry::Mesh::list meshes;
+    for (const auto &resource : node.geometryData) {
+        meshes.push_back(loadMesh(node, resource, istream(resource.href)));
+    }
+    return meshes;
 }
 
 } // namespace slpk
