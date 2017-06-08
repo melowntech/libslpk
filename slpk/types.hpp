@@ -191,6 +191,7 @@ UTILITY_GENERATE_ENUM(GeometryType,
 
 UTILITY_GENERATE_ENUM(Topology,
                       ((perAttributeArray)("PerAttributeArray"))
+                      ((interleavedArray)("InterleavedArray"))
                       ((indexed)("Indexed"))
                       )
 
@@ -222,15 +223,15 @@ struct HeaderAttribute {
 struct GeometryAttribute {
     // key from original dictionary
     std::string key;
-    // TODO: byteOffset
-    // TODO: count
+    std::size_t byteOffset;
+    std::size_t count;
     DataType valueType;
     std::uint16_t valuesPerElement;
     // TODO: values
     std::vector<int> componentIndices;
 
     GeometryAttribute(const std::string &key)
-        : key(key), valueType(), valuesPerElement()
+        : key(key), byteOffset(), count(), valueType(), valuesPerElement()
     {}
 
     typedef std::vector<GeometryAttribute> list;
@@ -245,14 +246,17 @@ struct GeometrySchema {
      */
     GeometryAttribute::list vertexAttributes;
 
-    // TODO: faces
+    /** Sorted by `ordering`. Ordering is not present here.
+     */
+    GeometryAttribute::list faces;
 
     /** Sorted by `featureAttributeOrder`. Ordering is not present here.
      */
     GeometryAttribute::list featureAttributes;
 
     GeometrySchema()
-        : geometryType(), topology(Topology::perAttributeArray)
+        : geometryType(GeometryType::triangles)
+        , topology(Topology::perAttributeArray)
     {}
 };
 
@@ -391,7 +395,6 @@ struct Feature {
 };
 
 struct Node {
-
     std::string id;
     int level;
     std::string version;

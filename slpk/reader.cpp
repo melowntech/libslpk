@@ -41,6 +41,7 @@
 #include "utility/streams.hpp"
 #include "utility/path.hpp"
 #include "utility/uri.hpp"
+#include "utility/binaryio.hpp"
 
 #include "jsoncpp/json.hpp"
 #include "jsoncpp/as.hpp"
@@ -50,6 +51,7 @@
 
 namespace fs = boost::filesystem;
 namespace bio = boost::iostreams;
+namespace bin = utility::binaryio;
 
 namespace slpk {
 
@@ -155,7 +157,7 @@ Metadata loadMetadata(const roarchive::IStream::pointer &in)
 
 void parse(SpatialReference &srs, const Json::Value &value)
 {
-    Json::getOpt(srs.wkid, value, "layerType");
+    Json::getOpt(srs.wkid, value, "wkid");
     Json::getOpt(srs.latestWkid, value, "latestWkid");
     Json::getOpt(srs.vcsWkid, value, "vcsWkid");
     Json::getOpt(srs.latestVcsWkid, value, "latestVcsWkid");
@@ -204,8 +206,8 @@ void parse(HeaderAttribute::list &hal, const Json::Value &value)
 
 void parse(GeometryAttribute &ga, const Json::Value &value)
 {
-    // TODO: byteOffset
-    // TODO: count
+    Json::getOpt(ga.byteOffset, value, "byteOffset");
+    Json::getOpt(ga.count, value, "count");
     Json::get(ga.valueType, value, "valueType");
     Json::get(ga.valuesPerElement, value, "valuesPerElement");
     // TODO: values
@@ -269,13 +271,13 @@ void parse(GeometrySchema &gs, const Json::Value &value)
               , Json::check(value["header"], Json::arrayValue, "header"));
     }
 
-    // load ordering
     parse(gs.vertexAttributes, value
           , "vertexAttributes", "ordering");
 
-    // TODO: faces
+    parse(gs.faces, value
+          , "faces", "ordering");
 
-    parse(gs.vertexAttributes, value
+    parse(gs.featureAttributes, value
           , "featureAttributes", "featureAttributeOrder");
 }
 
@@ -373,11 +375,18 @@ SceneLayerInfo loadSceneLayerInfo(const roarchive::IStream::pointer &in)
     return loadSceneLayerInfo(in->get(), in->path());
 }
 
+void parse(MeanBoundingSphere &mbs, const Json::Value &value, const char *name)
+{
+    Json::get(mbs.x, value, 0, name);
+    Json::get(mbs.y, value, 1, name);
+    Json::get(mbs.z, value, 2, name);
+    Json::get(mbs.r, value, 3, name);
+}
 
 void parse(NodeReference &nr, const Json::Value &value, const std::string &dir)
 {
     Json::get(nr.id, value, "id");
-    // mbs
+    parse(nr.mbs, value["mbs"], "mbs");
     Json::get(nr.href, value, "href");
     nr.href = joinPaths(dir, makeDir(nr.href));
     // version
@@ -401,9 +410,9 @@ void parse(Resource &r, const Json::Value &value, const std::string &dir
     r.encoding = &encoding;
     // layerContent
     // featureRange
-    // multiTextureBundle
-    // vertexElements
-    // faceElements
+    Json::getOpt(r.multiTextureBundle, value, "multiTextureBundle");
+    Json::getOpt(r.vertexElements, value, "vertexElements");
+    Json::getOpt(r.faceElements, value, "faceElements");
 }
 
 void parse(Resource::list &rl, const Json::Value &value
@@ -437,6 +446,9 @@ Node loadNodeIndex(std::istream &in, const fs::path &path
     Node ni(store);
     Json::get(ni.id, value, "id");
     Json::get(ni.level, value, "level");
+    Json::getOpt(ni.version, value, "version");
+
+    parse(ni.mbs, value["mbs"], "mbs");
 
     if (value.isMember("parentNode")) {
         ni.parentNode = boost::in_place();
@@ -488,20 +500,219 @@ Node loadNodeIndex(const roarchive::IStream::pointer &istream
     return loadNodeIndex(istream->get(), istream->path(), dir, store);
 }
 
+template <typename T>
+void read(std::istream &in, DataType type, T &out)
+{
+#define READ_DATATYPE(ENUM, TYPE)                               \
+    case DataType::ENUM: out = T(bin::read<TYPE>(in)); return
+
+    switch (type) {
+        READ_DATATYPE(uint8, std::uint8_t);
+        READ_DATATYPE(uint16, std::uint16_t);
+        READ_DATATYPE(uint32, std::uint32_t);
+        READ_DATATYPE(uint64, std::uint64_t);
+
+        READ_DATATYPE(int8, std::int8_t);
+        READ_DATATYPE(int16, std::int16_t);
+        READ_DATATYPE(int32, std::int32_t);
+        READ_DATATYPE(int64, std::int64_t);
+
+        READ_DATATYPE(float32, float);
+        READ_DATATYPE(float64, double);
+    }
+#undef READ_DATATYPE
+
+    LOGTHROW(err1, std::logic_error)
+        << "Invalid datatype (int code="
+        << static_cast<int>(type) << ").";
+    throw;
+}
+
+std::size_t byteCount(const DataType &type)
+{
+#define MEASURE_DATATYPE(ENUM, TYPE)            \
+    case DataType::ENUM: return sizeof(TYPE)
+
+    switch (type) {
+        MEASURE_DATATYPE(uint8, std::uint8_t);
+        MEASURE_DATATYPE(uint16, std::uint16_t);
+        MEASURE_DATATYPE(uint32, std::uint32_t);
+        MEASURE_DATATYPE(uint64, std::uint64_t);
+
+        MEASURE_DATATYPE(int8, std::int8_t);
+        MEASURE_DATATYPE(int16, std::int16_t);
+        MEASURE_DATATYPE(int32, std::int32_t);
+        MEASURE_DATATYPE(int64, std::int64_t);
+
+        MEASURE_DATATYPE(float32, float);
+        MEASURE_DATATYPE(float64, double);
+    }
+#undef MEASURE_DATATYPE
+
+LOGTHROW(err1, std::logic_error) << "Invalid datatype.";
+    throw;
+}
+
+std::size_t byteCount(const GeometryAttribute &ga)
+{
+    return ga.valuesPerElement * byteCount(ga.valueType);
+}
+
+struct Header {
+    std::size_t vertexCount;
+    std::size_t featureCount;
+
+    Header() : vertexCount(), featureCount() {}
+};
+
+Header loadHeader(std::istream &in, const HeaderAttribute::list &has)
+{
+    Header h;
+
+    for (const auto &ha : has) {
+        if (ha.property == "vertexCount") {
+            read(in, ha.type, h.vertexCount);
+        } else if (ha.property == "featureCount") {
+            read(in, ha.type, h.featureCount);
+        } else {
+            in.ignore(byteCount(ha.type));
+        }
+    }
+
+    return h;
+}
+
+void loadPerAttributeArray(geometry::Mesh &mesh, std::istream &in
+                           , const Node &node, const Header &header
+                           , const GeometrySchema &schema)
+{
+    // empty mesh?
+    if (!header.vertexCount) { return; }
+
+    if (header.vertexCount % 3) {
+        LOGTHROW(err1, std::runtime_error)
+            << "Invalid number of vertices in PerAttributeArray layout: "
+            "number of vertices (" << header.vertexCount
+            << ") not divisible by 3.";
+    }
+
+    auto loadVertex([&](const GeometryAttribute &ga, math::Point3 &v)
+    {
+        read(in, ga.valueType, v(0)); v[0] += node.mbs.x;
+        read(in, ga.valueType, v(1)); v[1] += node.mbs.y;
+        read(in, ga.valueType, v(2)); v[2] += node.mbs.z;
+    });
+
+    auto loadTxCoord([&](const GeometryAttribute &ga, math::Point2 &t)
+    {
+        read(in, ga.valueType, t(0));
+        read(in, ga.valueType, t(1));
+    });
+
+    for (const auto &ga : schema.vertexAttributes) {
+        if (ga.key == "position") {
+            if (ga.valuesPerElement != 3) {
+                LOGTHROW(err1, std::runtime_error)
+                    << "Number of vertex elements must be 3 not "
+                    << ga.valuesPerElement << ".";
+            }
+
+            LOG(debug) << "Loading data for vertices.";
+            mesh.vertices.resize(header.vertexCount);
+            for (auto &v : mesh.vertices) {
+                loadVertex(ga, v);
+            }
+        } else if (ga.key == "uv0") {
+            if (ga.valuesPerElement != 2) {
+                LOGTHROW(err1, std::runtime_error)
+                    << "Number of UV elements must be 2 not "
+                    << ga.valuesPerElement << ".";
+            }
+
+            LOG(debug) << "Loading data for texture coordinates.";
+            mesh.tCoords.resize(header.vertexCount);
+            for (auto &t : mesh.tCoords) {
+                loadTxCoord(ga, t);
+            }
+        } else {
+            // ignore everything else
+            LOG(debug)
+                << "Ignoring data for unsupported vertex attribute <"
+                << ga.key << "> (" << (header.vertexCount * byteCount(ga))
+                << " bytes).";
+            in.ignore(header.vertexCount * byteCount(ga));
+        }
+    }
+
+    if (mesh.vertices.empty()) {
+        LOGTHROW(err1, std::runtime_error)
+            << "No vertex coordinates defined.";
+    }
+
+    // 3 vertices -> face
+    mesh.faces.resize(header.vertexCount / 3);
+    bool hasTx(!mesh.tCoords.empty());
+
+    std::size_t vi(0);
+    for (auto &f : mesh.faces) {
+        f.a = vi;
+        f.b = vi + 1;
+        f.c = vi + 2;
+        if (hasTx) {
+            f.ta = vi;
+            f.tb = vi + 1;
+            f.tc = vi + 2;
+        }
+        vi += 3;
+    }
+}
+
 geometry::Mesh loadMesh(const Node &node, const Resource &resource
                         , std::istream &in, const fs::path &path)
 {
     LOG(info1) << "Loading geometry from " << path  << ".";
 
     const auto &store(node.store());
+    if (!store.defaultGeometrySchema) {
+        LOGTHROW(err1, std::runtime_error)
+            << "Cannot load mesh since there is no default geometry "
+            "schema present in the store.";
+    }
+
+    const auto &schema(*store.defaultGeometrySchema);
+
+    if (schema.geometryType != GeometryType::triangles) {
+        LOGTHROW(err1, std::runtime_error)
+            << "Only triangles are supported while loading mesh.";
+    }
 
     geometry::Mesh mesh;
 
+    const auto header(loadHeader(in, schema.header));
+    LOG(info1) << "Loaded header: vertexCount=" << header.vertexCount
+               << ", featureCount=" << header.featureCount << ".";
+
+    switch (schema.topology) {
+    case Topology::perAttributeArray:
+        loadPerAttributeArray(mesh, in, node, header, schema);
+        break;
+
+    case Topology::interleavedArray:
+        LOGTHROW(err1, std::runtime_error)
+            << "Cannot read mesh from " << path << "with indexed topology: "
+            "unsupported.";
+        break;
+
+    case Topology::indexed:
+        LOGTHROW(err1, std::runtime_error)
+            << "Cannot read mesh from " << path << " with indexed topology: "
+            "not implemented yet.";
+        break;
+    }
+
     return mesh;
 
-    (void) node;
     (void) resource;
-    (void) in;
 }
 
 geometry::Mesh loadMesh(const Node &node, const Resource &resource
