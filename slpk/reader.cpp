@@ -64,19 +64,29 @@ const std::string NodeIndex("3dNodeIndexDocument.json");
 const fs::path gzExt(".gz");
 } // namespace constants
 
-typedef std::map<std::string, std::string> MIMEMapping;
+struct ExtInfo {
+    std::string extension;
+    int preference;
+
+    ExtInfo(const std::string &extension = "", int preference = -1)
+        : extension(extension), preference(preference)
+    {}
+};
+
+typedef std::map<std::string, ExtInfo> MIMEMapping;
 
 const MIMEMapping mimeMapping {
-    { "application/octet-stream", ".bin" }
-    , { "image/jpeg", ".jpg" }
-    , { "image/vnd-ms.dds", ".bin.dds" }
+    { "application/octet-stream", { ".bin", 0 } }
+    , { "image/jpeg", { ".jpg", 10 } }
+    , { "image/png", { ".png", 20 } }
+    , { "image/vnd-ms.dds", { ".bin.dds", -1 } }
 };
 
 // must stay empty
-const std::string unknownMimeExt;
+const ExtInfo unknownMimeExt;
 
-const std::string &extFromMime(const std::string &mime) {
-    auto process([](const std::string &mime) -> const std::string&
+const ExtInfo& extFromMime(const std::string &mime) {
+    auto process([](const std::string &mime) -> const ExtInfo&
     {
         auto fmimeMapping(mimeMapping.find(mime));
         if (fmimeMapping == mimeMapping.end()) {
@@ -90,6 +100,24 @@ const std::string &extFromMime(const std::string &mime) {
         return process(mime);
     }
     return process(mime.substr(0, sc));
+}
+
+PreferredEncoding
+preferredTextureEncoding(const Encoding::list &textureEncoding)
+{
+    PreferredEncoding pe;
+
+    int index = 0;
+    for (const auto &encoding : textureEncoding) {
+        if (!pe.encoding || (encoding.preference > pe.encoding->preference)) {
+            pe.encoding = &encoding;
+            pe.index = index;
+        }
+
+        ++index;
+    }
+
+    return pe;
 }
 
 std::string joinPaths(const std::string &a, const std::string &b)
@@ -285,7 +313,9 @@ void parse(Encoding &encoding, const Json::Value &value, const char *key)
 {
     if (value.isMember(key)) {
         Json::get(encoding.mime, value, key);
-        encoding.ext = extFromMime(encoding.mime);
+        const auto& ei(extFromMime(encoding.mime));
+        encoding.ext = ei.extension;
+        encoding.preference = ei.preference;
     }
 }
 
@@ -297,7 +327,9 @@ void parse(Encoding::list &el, const Json::Value &value
         el.emplace_back();
         auto &encoding(el.back());
         encoding.mime = item.asString();
-        encoding.ext = extFromMime(encoding.mime);
+        auto e(extFromMime(encoding.mime));
+        encoding.ext = e.extension;
+        encoding.preference = e.preference;
     }
 }
 
@@ -607,6 +639,7 @@ void loadPerAttributeArray(geometry::Mesh &mesh, std::istream &in
     {
         read(in, ga.valueType, t(0));
         read(in, ga.valueType, t(1));
+        t(1) = 1.0 - t(1);
     });
 
     for (const auto &ga : schema.vertexAttributes) {
@@ -740,14 +773,16 @@ geo::SrsDefinition SpatialReference::srs() const
     return geo::SrsDefinition(wkid, vcsWkid);
 }
 
-void Store::absolutize(const std::string &cwd)
+void Store::finish(const std::string &cwd)
 {
     rootNode = joinPaths(cwd, makeDir(rootNode));
+    preferredTextureEncoding_
+        = slpk::preferredTextureEncoding(textureEncoding);
 }
 
-void SceneLayerInfo::absolutize(const std::string &cwd)
+void SceneLayerInfo::finish(const std::string &cwd)
 {
-    store->absolutize(cwd);
+    store->finish(cwd);
 }
 
 Archive::Archive(const fs::path &root)
@@ -755,7 +790,7 @@ Archive::Archive(const fs::path &root)
     , metadata_(loadMetadata(archive_.istream(constants::MetadataName)))
     , sli_(loadSceneLayerInfo(istream(constants::SceneLayer)))
 {
-    sli_.absolutize();
+    sli_.finish();
 }
 
 roarchive::IStream::pointer Archive::istream(const fs::path &path) const
@@ -835,13 +870,35 @@ Node::map Archive::loadTree() const
     return nodes;
 }
 
-geometry::Mesh::list Archive::loadGeometry(const Node &node)
+geometry::Mesh::list Archive::loadGeometry(const Node &node) const
 {
     geometry::Mesh::list meshes;
     for (const auto &resource : node.geometryData) {
         meshes.push_back(loadMesh(node, resource, istream(resource.href)));
     }
     return meshes;
+}
+
+roarchive::IStream::pointer Archive::texture(const Node &node, int index) const
+{
+    const auto& pe(node.store().preferredTextureEncoding());
+
+    if (!pe.encoding) {
+        LOGTHROW(err1, std::runtime_error)
+            << "No supported texture available for node <" << node.id << ">.";
+    }
+
+    // calculate index in provided textures
+    const auto i(index * node.store().textureEncoding.size() + pe.index);
+
+    if (i >= node.textureData.size()) {
+        LOGTHROW(err1, std::runtime_error)
+            << "Not enough data to get texture of type <"
+            << pe.encoding->mime << "> from node <" <<  node.id << ">.";
+    }
+
+    // return stream
+    return istream(node.textureData[i].href);
 }
 
 } // namespace slpk

@@ -40,17 +40,36 @@ class Archive {
 public:
     Archive(const boost::filesystem::path &root);
 
+    /** Generic I/O.
+     */
     roarchive::IStream::pointer
     istream(const boost::filesystem::path &path) const;
 
+    /** Returns loaded scene layer info.
+     */
     const SceneLayerInfo& sceneLayerInfo() const { return sli_; }
 
+    /** Loads node index from given path inside archive.
+     */
     Node loadNodeIndex(const boost::filesystem::path &dir) const;
+
+    /** Load root node (from path stated in scene layer info).
+     */
     Node loadRootNodeIndex() const;
 
+    /** Loads whole node tree.
+     */
     Node::map loadTree() const;
 
-    geometry::Mesh::list loadGeometry(const Node &node);
+    /** Loads node geometry. Possibly more meshes than just one.
+     */
+    geometry::Mesh::list loadGeometry(const Node &node) const;
+
+    /** Opens texture file for given geometry mesh. If there are more version of
+     *  the same texture the returns PNG or JPEG. DDS is ignored.
+     */
+    roarchive::IStream::pointer texture(const Node &node, int index = 0)
+        const;
 
 private:
     roarchive::RoArchive archive_;

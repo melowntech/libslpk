@@ -261,12 +261,26 @@ struct GeometrySchema {
 };
 
 struct Encoding {
+    // mime type
     std::string mime;
+    // filename extension
     std::string ext;
+    // encdings with higher preference value are more preferred, negative value
+    // means type is unsupported
+    int preference;
 
     typedef std::vector<Encoding> list;
 
-    Encoding() = default;
+    Encoding() : preference(0) {}
+};
+
+struct PreferredEncoding {
+    const Encoding *encoding;
+    int index;
+
+    PreferredEncoding(const Encoding *encoding = nullptr, int index = 0)
+        : encoding(encoding), index(index)
+    {}
 };
 
 struct Store {
@@ -298,9 +312,16 @@ struct Store {
         , lodModel(LodModel::nodeSwitching)
     {}
 
-    void absolutize(const std::string &cwd = "");
+    void finish(const std::string &cwd = "");
+
+    const PreferredEncoding& preferredTextureEncoding() const {
+        return preferredTextureEncoding_;
+    }
 
     typedef std::shared_ptr<Store> pointer;
+
+private:
+    PreferredEncoding preferredTextureEncoding_;
 };
 
 struct SceneLayerInfo {
@@ -324,7 +345,7 @@ struct SceneLayerInfo {
 
     SceneLayerInfo() : id() , layerType(LayerType::object) {}
 
-    void absolutize(const std::string &cwd = "");
+    void finish(const std::string &cwd = "");
 };
 
 struct MeanBoundingSphere {
