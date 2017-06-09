@@ -43,6 +43,8 @@
 #include "utility/uri.hpp"
 #include "utility/binaryio.hpp"
 
+#include "imgproc/jpeg.hpp"
+
 #include "jsoncpp/json.hpp"
 #include "jsoncpp/as.hpp"
 #include "jsoncpp/io.hpp"
@@ -61,23 +63,31 @@ namespace constants {
 const std::string MetadataName("metadata.json");
 const std::string SceneLayer("3dSceneLayer.json");
 const std::string NodeIndex("3dNodeIndexDocument.json");
+const std::string SharedResource("sharedResource.json");
 const fs::path gzExt(".gz");
 } // namespace constants
 
 struct ExtInfo {
     std::string extension;
     int preference;
+    Size2Function size2;
 
-    ExtInfo(const std::string &extension = "", int preference = -1)
-        : extension(extension), preference(preference)
+    ExtInfo(const std::string &extension = "", int preference = -1
+            , const Size2Function &size2 = Size2Function())
+        : extension(extension), preference(preference), size2(size2)
     {}
 };
 
 typedef std::map<std::string, ExtInfo> MIMEMapping;
 
+const auto jpegSize([](const roarchive::IStream::pointer &is) {
+        return imgproc::jpegSize(is->get(), is->path());
+    });
+
 const MIMEMapping mimeMapping {
     { "application/octet-stream", { ".bin", 0 } }
-    , { "image/jpeg", { ".jpg", 10 } }
+    , { "image/tiff", { ".tiff", 5 } }
+    , { "image/jpeg", { ".jpg", 10, jpegSize } }
     , { "image/png", { ".png", 20 } }
     , { "image/vnd-ms.dds", { ".bin.dds", -1 } }
 };
@@ -313,9 +323,10 @@ void parse(Encoding &encoding, const Json::Value &value, const char *key)
 {
     if (value.isMember(key)) {
         Json::get(encoding.mime, value, key);
-        const auto& ei(extFromMime(encoding.mime));
+        const auto &ei(extFromMime(encoding.mime));
         encoding.ext = ei.extension;
         encoding.preference = ei.preference;
+        encoding.size2 = ei.size2;
     }
 }
 
@@ -327,9 +338,10 @@ void parse(Encoding::list &el, const Json::Value &value
         el.emplace_back();
         auto &encoding(el.back());
         encoding.mime = item.asString();
-        auto e(extFromMime(encoding.mime));
-        encoding.ext = e.extension;
-        encoding.preference = e.preference;
+        const auto &ei(extFromMime(encoding.mime));
+        encoding.ext = ei.extension;
+        encoding.preference = ei.preference;
+        encoding.size2 = ei.size2;
     }
 }
 
@@ -435,11 +447,17 @@ void parse(NodeReference::list &nrl, const Json::Value &value
 }
 
 void parse(Resource &r, const Json::Value &value, const std::string &dir
-           , const Encoding &encoding)
+           , const Encoding *encoding = nullptr)
 {
     Json::get(r.href, value, "href");
-    r.href = joinPaths(dir, r.href + encoding.ext);
-    r.encoding = &encoding;
+
+    if (encoding) {
+        r.href = joinPaths(dir, r.href + encoding->ext);
+        r.encoding = encoding;
+    } else {
+        r.href = joinPaths(dir, r.href);
+    }
+
     // layerContent
     // featureRange
     Json::getOpt(r.multiTextureBundle, value, "multiTextureBundle");
@@ -455,7 +473,7 @@ void parse(Resource::list &rl, const Json::Value &value
     auto iencodings(encodings.begin());
     for (const auto &item : value) {
         rl.emplace_back();
-        parse(rl.back(), item, dir, *iencodings++);
+        parse(rl.back(), item, dir, &*iencodings++);
     }
 }
 
@@ -465,7 +483,7 @@ void parse(Resource::list &rl, const Json::Value &value
 {
     for (const auto &item : value) {
         rl.emplace_back();
-        parse(rl.back(), item, dir, encoding);
+        parse(rl.back(), item, dir, &encoding);
     }
 }
 
@@ -499,6 +517,14 @@ Node loadNodeIndex(std::istream &in, const fs::path &path
     if (value.isMember("neighbors")) {
         parse(ni.neighbors
               , Json::check(value["neighbors"], Json::arrayValue, "neighbors")
+              , dir);
+    }
+
+    if (value.isMember("sharedResource")) {
+        ni.sharedResource = boost::in_place();
+        parse(*ni.sharedResource
+              , Json::check(value["sharedResource"], Json::objectValue
+                            , "sharedResource")
               , dir);
     }
 
@@ -614,7 +640,7 @@ Header loadHeader(std::istream &in, const HeaderAttribute::list &has)
     return h;
 }
 
-void loadPerAttributeArray(geometry::Mesh &mesh, std::istream &in
+void loadPerAttributeArray(geometry::ObjParserBase &loader, std::istream &in
                            , const Node &node, const Header &header
                            , const GeometrySchema &schema)
 {
@@ -628,19 +654,24 @@ void loadPerAttributeArray(geometry::Mesh &mesh, std::istream &in
             << ") not divisible by 3.";
     }
 
-    auto loadVertex([&](const GeometryAttribute &ga, math::Point3 &v)
+    geometry::ObjParserBase::Vector3d point;
+
+    auto loadVertex([&](const GeometryAttribute &ga)
     {
-        read(in, ga.valueType, v(0)); v[0] += node.mbs.x;
-        read(in, ga.valueType, v(1)); v[1] += node.mbs.y;
-        read(in, ga.valueType, v(2)); v[2] += node.mbs.z;
+        read(in, ga.valueType, point.x); point.x += node.mbs.x;
+        read(in, ga.valueType, point.y); point.y += node.mbs.y;
+        read(in, ga.valueType, point.z); point.z += node.mbs.z;
     });
 
-    auto loadTxCoord([&](const GeometryAttribute &ga, math::Point2 &t)
+    auto loadTxCoord([&](const GeometryAttribute &ga)
     {
-        read(in, ga.valueType, t(0));
-        read(in, ga.valueType, t(1));
-        t(1) = 1.0 - t(1);
+        read(in, ga.valueType, point.x);
+        read(in, ga.valueType, point.y);
+        point.y = 1.0 - point.y;
     });
+
+    bool verticesLoaded(false);
+    bool hasTx(false);
 
     for (const auto &ga : schema.vertexAttributes) {
         if (ga.key == "position") {
@@ -651,10 +682,11 @@ void loadPerAttributeArray(geometry::Mesh &mesh, std::istream &in
             }
 
             LOG(debug) << "Loading data for vertices.";
-            mesh.vertices.resize(header.vertexCount);
-            for (auto &v : mesh.vertices) {
-                loadVertex(ga, v);
+            for (auto i(header.vertexCount); i; --i) {
+                loadVertex(ga);
+                loader.addVertex(point);
             }
+            verticesLoaded = true;
         } else if (ga.key == "uv0") {
             if (ga.valuesPerElement != 2) {
                 LOGTHROW(err1, std::runtime_error)
@@ -663,10 +695,11 @@ void loadPerAttributeArray(geometry::Mesh &mesh, std::istream &in
             }
 
             LOG(debug) << "Loading data for texture coordinates.";
-            mesh.tCoords.resize(header.vertexCount);
-            for (auto &t : mesh.tCoords) {
-                loadTxCoord(ga, t);
+            for (auto i(header.vertexCount); i; --i) {
+                loadTxCoord(ga);
+                loader.addTexture(point);
             }
+            hasTx = true;
         } else {
             // ignore everything else
             LOG(debug)
@@ -677,31 +710,31 @@ void loadPerAttributeArray(geometry::Mesh &mesh, std::istream &in
         }
     }
 
-    if (mesh.vertices.empty()) {
+    if (!verticesLoaded) {
         LOGTHROW(err1, std::runtime_error)
             << "No vertex coordinates defined.";
     }
 
     // 3 vertices -> face
-    mesh.faces.resize(header.vertexCount / 3);
-    bool hasTx(!mesh.tCoords.empty());
+    for (std::size_t vi(0); vi < header.vertexCount; vi += 3) {
+        geometry::ObjParserBase::Facet f;
 
-    std::size_t vi(0);
-    for (auto &f : mesh.faces) {
-        f.a = vi;
-        f.b = vi + 1;
-        f.c = vi + 2;
+        f.v[0] = vi;
+        f.v[1] = vi + 1;
+        f.v[2] = vi + 2;
         if (hasTx) {
-            f.ta = vi;
-            f.tb = vi + 1;
-            f.tc = vi + 2;
+            f.t[0] = vi;
+            f.t[1] = vi + 1;
+            f.t[2] = vi + 2;
         }
-        vi += 3;
+
+        loader.addFacet(f);
     }
 }
 
-geometry::Mesh loadMesh(const Node &node, const Resource &resource
-                        , std::istream &in, const fs::path &path)
+void loadMesh(geometry::ObjParserBase &loader, const Node &node
+              , const Resource &
+              , std::istream &in, const fs::path &path)
 {
     LOG(info1) << "Loading geometry from " << path  << ".";
 
@@ -719,15 +752,13 @@ geometry::Mesh loadMesh(const Node &node, const Resource &resource
             << "Only triangles are supported while loading mesh.";
     }
 
-    geometry::Mesh mesh;
-
     const auto header(loadHeader(in, schema.header));
     LOG(info1) << "Loaded header: vertexCount=" << header.vertexCount
                << ", featureCount=" << header.featureCount << ".";
 
     switch (schema.topology) {
     case Topology::perAttributeArray:
-        loadPerAttributeArray(mesh, in, node, header, schema);
+        loadPerAttributeArray(loader, in, node, header, schema);
         break;
 
     case Topology::interleavedArray:
@@ -743,15 +774,13 @@ geometry::Mesh loadMesh(const Node &node, const Resource &resource
         break;
     }
 
-    return mesh;
-
-    (void) resource;
 }
 
-geometry::Mesh loadMesh(const Node &node, const Resource &resource
-                        , const roarchive::IStream::pointer &istream)
+void loadMesh(geometry::ObjParserBase &loader, const Node &node
+              , const Resource &resource
+              , const roarchive::IStream::pointer &istream)
 {
-    return loadMesh(node, resource, istream->get(), istream->path());
+    loadMesh(loader, node, resource, istream->get(), istream->path());
 }
 
 } // namespace
@@ -846,37 +875,95 @@ Node Archive::loadRootNodeIndex() const
     return loadNodeIndex(sli_.store->rootNode);
 }
 
-Node::map Archive::loadTree() const
+Tree Archive::loadTree() const
 {
-    Node::map nodes;
+    Tree tree;
 
     std::queue<const NodeReference*> queue;
     auto add([&](Node node)
     {
-        auto res(nodes.insert(Node::map::value_type
-                              (node.id, std::move(node))));
+        auto res(tree.nodes.insert(Node::map::value_type
+                                   (node.id, std::move(node))));
         for (const auto &child : res.first->second.children) {
             queue.push(&child);
         }
     });
 
-    add(loadRootNodeIndex());
+    // load root and remember id
+    {
+        auto root(loadRootNodeIndex());
+        tree.rootNodeId = root.id;
+        add(std::move(root));
+    }
 
     while (!queue.empty()) {
         add(loadNodeIndex(queue.front()->href));
         queue.pop();
     }
 
-    return nodes;
+    return tree;
 }
+
+void Archive::loadGeometry(GeometryLoader &loader, const Node &node) const
+{
+    for (const auto &resource : node.geometryData) {
+        loadMesh(loader.next(), node, resource, istream(resource.href));
+    }
+}
+
+namespace {
+
+class MeshLoader
+    : public GeometryLoader
+    , public geometry::ObjParserBase
+{
+public:
+    MeshLoader(std::size_t count)
+        : meshes_(count), current_(nullptr)
+    {}
+
+    virtual geometry::ObjParserBase& next() {
+        if (!current_) {
+            current_ = meshes_.data();
+        } else {
+            ++current_;
+        }
+        return *this;
+    }
+
+    geometry::Mesh::list&& moveoutMeshes() {
+        return std::move(meshes_);
+    }
+
+    virtual void addVertex(const Vector3d &v) {
+        current_->vertices.emplace_back(v.x, v.y, v.z);
+    }
+
+    virtual void addTexture(const Vector3d &t) {
+        current_->tCoords.emplace_back(t.x, t.y);
+    }
+
+    virtual void addFacet(const Facet &f) {
+        current_->faces.emplace_back(f.v[0], f.v[1], f.v[2]
+                                     , f.t[0], f.t[1], f.t[2]);
+    }
+
+    virtual void addNormal(const Vector3d&) {}
+    virtual void materialLibrary(const std::string&) {}
+    virtual void useMaterial(const std::string&) {}
+
+private:
+    geometry::Mesh::list meshes_;
+    geometry::Mesh* current_;
+};
+
+} // namespace
 
 geometry::Mesh::list Archive::loadGeometry(const Node &node) const
 {
-    geometry::Mesh::list meshes;
-    for (const auto &resource : node.geometryData) {
-        meshes.push_back(loadMesh(node, resource, istream(resource.href)));
-    }
-    return meshes;
+    MeshLoader loader(node.geometryData.size());
+    loadGeometry(loader, node);
+    return loader.moveoutMeshes();
 }
 
 roarchive::IStream::pointer Archive::texture(const Node &node, int index) const
@@ -899,6 +986,39 @@ roarchive::IStream::pointer Archive::texture(const Node &node, int index) const
 
     // return stream
     return istream(node.textureData[i].href);
+}
+
+math::Size2 Archive::textureSize(const Node &node, int index) const
+{
+    const auto& pe(node.store().preferredTextureEncoding());
+
+    if (!pe.encoding) {
+        LOGTHROW(err1, std::runtime_error)
+            << "No supported texture available for node <" << node.id << ">.";
+    }
+
+    if (!pe.encoding->size2) {
+        LOGTHROW(err1, std::runtime_error)
+            << "Unable to measure images of MIME type <" << pe.encoding->mime
+            << "> from node <" <<  node.id << ">.";
+    }
+
+    // calculate index in provided textures
+    const auto i(index * node.store().textureEncoding.size() + pe.index);
+
+    if (i >= node.textureData.size()) {
+        LOGTHROW(err1, std::runtime_error)
+            << "Not enough data to get texture of type <"
+            << pe.encoding->mime << "> from node <" <<  node.id << ">.";
+    }
+
+    // return stream
+    return pe.encoding->size2(istream(node.textureData[i].href));
+}
+
+geo::SrsDefinition Archive::srs() const
+{
+    return sli_.spatialReference.srs();
 }
 
 } // namespace slpk

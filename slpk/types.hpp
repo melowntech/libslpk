@@ -29,6 +29,7 @@
 #include <cstddef>
 #include <map>
 #include <memory>
+#include <functional>
 
 // Please, don't ask...
 #ifdef __GNUC__
@@ -260,6 +261,9 @@ struct GeometrySchema {
     {}
 };
 
+typedef std::function<math::Size2
+                      (const roarchive::IStream::pointer&)> Size2Function;
+
 struct Encoding {
     // mime type
     std::string mime;
@@ -268,6 +272,11 @@ struct Encoding {
     // encdings with higher preference value are more preferred, negative value
     // means type is unsupported
     int preference;
+
+    /** Measures size2 of files of this encoding. Available only for (some)
+     *  image formats.
+     */
+    Size2Function size2;
 
     typedef std::vector<Encoding> list;
 
@@ -443,6 +452,18 @@ private:
     /** Reference to shared store.
      */
     Store::pointer store_;
+};
+
+struct Tree {
+    std::string rootNodeId;
+
+    Node::map nodes;
+
+    const Node* find(const std::string &id) const {
+        auto fnodes(nodes.find(id));
+        if (fnodes == nodes.end()) { return nullptr; }
+        return &fnodes->second;
+    }
 };
 
 } // namespace slpk

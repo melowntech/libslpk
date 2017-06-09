@@ -26,13 +26,27 @@
 #ifndef slpk_reader_hpp_included_
 #define slpk_reader_hpp_included_
 
-#include "roarchive/roarchive.hpp"
 #include "geometry/mesh.hpp"
+#include "geometry/parse-obj.hpp"
+
+#include "geo/srsdef.hpp"
+
+#include "roarchive/roarchive.hpp"
 
 #include "./types.hpp"
 
 namespace slpk {
 
+/** Abstract geometry loader.
+ */
+class GeometryLoader {
+public:
+    virtual ~GeometryLoader() {}
+
+    /** Get reference to next mesh.
+     */
+    virtual geometry::ObjParserBase& next() = 0;
+};
 
 /** SLPK archive reader
  */
@@ -49,6 +63,8 @@ public:
      */
     const SceneLayerInfo& sceneLayerInfo() const { return sli_; }
 
+    geo::SrsDefinition srs() const;
+
     /** Loads node index from given path inside archive.
      */
     Node loadNodeIndex(const boost::filesystem::path &dir) const;
@@ -59,17 +75,25 @@ public:
 
     /** Loads whole node tree.
      */
-    Node::map loadTree() const;
+    Tree loadTree() const;
 
     /** Loads node geometry. Possibly more meshes than just one.
      */
     geometry::Mesh::list loadGeometry(const Node &node) const;
+
+    /** Generic mesh load interface.
+     */
+    void loadGeometry(GeometryLoader &loader, const Node &node) const;
 
     /** Opens texture file for given geometry mesh. If there are more version of
      *  the same texture the returns PNG or JPEG. DDS is ignored.
      */
     roarchive::IStream::pointer texture(const Node &node, int index = 0)
         const;
+
+    /** Measures texture image size.
+     */
+    math::Size2 textureSize(const Node &node, int index = 0) const;
 
 private:
     roarchive::RoArchive archive_;
