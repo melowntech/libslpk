@@ -446,6 +446,8 @@ struct Node {
     Node(const Store::pointer &store) : store_(store) {}
     const Store& store() const { return *store_; }
 
+    bool hasGeometry() const { return !geometryData.empty(); }
+
     typedef std::map<std::string, Node> map;
 
 private:
