@@ -1,5 +1,5 @@
 # bump version here
-set(slpk_VERSION 1.0)
+set(slpk_VERSION 1.1)
 
 define_module(LIBRARY slpk=${slpk_VERSION}
   DEPENDS roarchive>=1.2 geo>=1.26 imgproc>=1.20 geometry>=1.9
