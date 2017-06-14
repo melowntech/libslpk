@@ -2,9 +2,9 @@
 set(slpk_VERSION 1.0)
 
 define_module(LIBRARY slpk=${slpk_VERSION}
-  DEPENDS roarchive>=1.1 geo>=1.24 imgproc>=1.20 geometry>=1.8
-  math>=1.2 utility>=1.11 dbglog>=1.4
-  jsoncpp>=1.1
+  DEPENDS roarchive>=1.1 geo>=1.26 imgproc>=1.20 geometry>=1.9
+  math>=1.2 utility>=1.19 dbglog>=1.4
+  jsoncpp>=2.2
   Boost_FILESYSTEM
   JPEG # need to measure JPEG images
   )
