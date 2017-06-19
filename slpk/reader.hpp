@@ -53,6 +53,7 @@ public:
 class Archive {
 public:
     Archive(const boost::filesystem::path &root);
+    Archive(roarchive::RoArchive &archive);
 
     /** Generic I/O.
      */

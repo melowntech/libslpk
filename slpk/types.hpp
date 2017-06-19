@@ -49,6 +49,8 @@
 
 namespace slpk {
 
+const std::string MainFile("metadata.json");
+
 UTILITY_GENERATE_ENUM(FolderPattern,
                       ((basic)("BASIC"))
                       ((extended)("EXTENDED"))

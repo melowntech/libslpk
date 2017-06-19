@@ -61,7 +61,7 @@ namespace slpk {
 namespace {
 
 namespace constants {
-const std::string MetadataName("metadata.json");
+const std::string MetadataName(MainFile);
 const std::string SceneLayer("3dSceneLayer.json");
 const std::string NodeIndex("3dNodeIndexDocument.json");
 const std::string SharedResource("sharedResource.json");
@@ -817,6 +817,14 @@ void SceneLayerInfo::finish(const std::string &cwd)
 
 Archive::Archive(const fs::path &root)
     : archive_(root, constants::MetadataName)
+    , metadata_(loadMetadata(archive_.istream(constants::MetadataName)))
+    , sli_(loadSceneLayerInfo(istream(constants::SceneLayer)))
+{
+    sli_.finish();
+}
+
+Archive::Archive(roarchive::RoArchive &archive)
+    : archive_(archive.applyHint(constants::MetadataName))
     , metadata_(loadMetadata(archive_.istream(constants::MetadataName)))
     , sli_(loadSceneLayerInfo(istream(constants::SceneLayer)))
 {
