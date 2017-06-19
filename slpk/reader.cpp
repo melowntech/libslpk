@@ -29,6 +29,7 @@
 #include <string>
 #include <fstream>
 
+#include <boost/utility/in_place_factory.hpp>
 #include <boost/filesystem.hpp>
 #include <boost/lexical_cast.hpp>
 #include <boost/iostreams/filter/zlib.hpp>
