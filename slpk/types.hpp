@@ -141,6 +141,7 @@ UTILITY_GENERATE_ENUM(ResourcePattern,
                       ((featureData)("FeatureData"))
                       ((geometry)("Geometry"))
                       ((texture)("Texture"))
+                      ((attributes)("Attributes"))
                       )
 
 UTILITY_GENERATE_ENUM(NormalReferenceFrame,

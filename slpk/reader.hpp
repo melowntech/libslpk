@@ -26,6 +26,8 @@
 #ifndef slpk_reader_hpp_included_
 #define slpk_reader_hpp_included_
 
+#include <initializer_list>
+
 #include "geometry/mesh.hpp"
 #include "geometry/parse-obj.hpp"
 
@@ -59,6 +61,12 @@ public:
      */
     roarchive::IStream::pointer
     istream(const boost::filesystem::path &path) const;
+
+    /** Generic I/O. Tries all extensions.
+     */
+    roarchive::IStream::pointer
+    istream(const boost::filesystem::path &path
+            , const std::initializer_list<const char*> &extensions) const;
 
     /** Returns loaded scene layer info.
      */

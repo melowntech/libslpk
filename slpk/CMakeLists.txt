@@ -18,3 +18,7 @@ buildsys_library(slpk)
 
 target_link_libraries(slpk ${MODULE_LIBRARIES})
 buildsys_target_compile_definitions(slpk ${MODULE_DEFINITIONS})
+
+if(MODULE_service_FOUND)
+  add_subdirectory(tools EXCLUDE_FROM_ALL)
+endif()

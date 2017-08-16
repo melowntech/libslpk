@@ -88,10 +88,12 @@ const auto jpegSize([](const roarchive::IStream::pointer &is) {
 const MIMEMapping mimeMapping {
     { "application/octet-stream", { ".bin", 0 } }
     , { "image/tiff", { ".tiff", 5 } }
-    , { "image/jpeg", { ".jpg", 10, jpegSize } }
+    , { "image/jpeg", { ".jpg", 30, jpegSize } }
     , { "image/png", { ".png", 20 } }
     , { "image/vnd-ms.dds", { ".bin.dds", -1 } }
 };
+
+const std::string defaultGeometryEncoding("application/octet-stream");
 
 // must stay empty
 const ExtInfo unknownMimeExt;
@@ -302,7 +304,7 @@ void parse(GeometryAttribute::list &gal, const Json::Value &value
 
 void parse(GeometrySchema &gs, const Json::Value &value)
 {
-    Json::get(gs.geometryType, value, "geometryType");
+    Json::getOpt(gs.geometryType, value, "geometryType");
     Json::get(gs.topology, value, "topology");
 
     if (value.isMember("header")) {
@@ -320,15 +322,21 @@ void parse(GeometrySchema &gs, const Json::Value &value)
           , "featureAttributes", "featureAttributeOrder");
 }
 
-void parse(Encoding &encoding, const Json::Value &value, const char *key)
+void parse(Encoding &encoding, const Json::Value &value, const char *key
+           , const boost::optional<std::string> &dfltMime = boost::none)
 {
     if (value.isMember(key)) {
         Json::get(encoding.mime, value, key);
-        const auto &ei(extFromMime(encoding.mime));
-        encoding.ext = ei.extension;
-        encoding.preference = ei.preference;
-        encoding.size2 = ei.size2;
+    } else if (dfltMime) {
+        encoding.mime = *dfltMime;
+    } else {
+        return;
     }
+
+    const auto &ei(extFromMime(encoding.mime));
+    encoding.ext = ei.extension;
+    encoding.preference = ei.preference;
+    encoding.size2 = ei.size2;
 }
 
 void parse(Encoding::list &el, const Json::Value &value
@@ -365,15 +373,18 @@ void parse(Store &s, const Json::Value &value)
 
     parse(s.nidEncoding, value, "nidEncoding");
     parse(s.featureEncoding, value, "featureEncoding");
-    parse(s.geometryEncoding, value, "geometryEncoding");
+    parse(s.geometryEncoding, value, "geometryEncoding"
+          , defaultGeometryEncoding);
     parse(s.textureEncoding, value, "textureEncoding");
 
     Json::getOpt(s.lodType, value, "lodType");
     Json::getOpt(s.lodModel, value, "lodModel");
 
-    parse(s.indexingScheme
-          , Json::check(value["indexingScheme"]
-                        , Json::objectValue, "indexingScheme"));
+    if (value.isMember("indexingScheme")) {
+        parse(s.indexingScheme
+              , Json::check(value["indexingScheme"]
+                            , Json::objectValue, "indexingScheme"));
+    }
 
     if (value.isMember("defaultGeometrySchema")) {
         s.defaultGeometrySchema = boost::in_place();
@@ -438,9 +449,20 @@ void parse(NodeReference &nr, const Json::Value &value, const std::string &dir)
     // featureCount
 }
 
+void parse(boost::optional<NodeReference> &nr, const Json::Value &value
+           , const std::string &dir)
+{
+    if (value.isNull()) { return; }
+
+    nr = boost::in_place();
+    parse(*nr, value, dir);
+}
+
 void parse(NodeReference::list &nrl, const Json::Value &value
            , const std::string &dir)
 {
+    if (value.isNull()) { return; }
+
     for (const auto &item : value) {
         nrl.emplace_back();
         parse(nrl.back(), item, dir);
@@ -453,7 +475,7 @@ void parse(Resource &r, const Json::Value &value, const std::string &dir
     Json::get(r.href, value, "href");
 
     if (encoding) {
-        r.href = joinPaths(dir, r.href + encoding->ext);
+        r.href = joinPaths(dir, r.href);
         r.encoding = encoding;
     } else {
         r.href = joinPaths(dir, r.href);
@@ -466,10 +488,21 @@ void parse(Resource &r, const Json::Value &value, const std::string &dir
     Json::getOpt(r.faceElements, value, "faceElements");
 }
 
+void parse(boost::optional<Resource> &r, const Json::Value &value
+           , const std::string &dir, const Encoding *encoding = nullptr)
+{
+    if (value.isNull()) { return; }
+
+    r = boost::in_place();
+    parse(*r, value, dir, encoding);
+}
+
 void parse(Resource::list &rl, const Json::Value &value
            , const std::string &dir
            , const Encoding::list &encodings)
 {
+    if (value.isNull()) { return; }
+
     // TODO: check encodings size
     auto iencodings(encodings.begin());
     for (const auto &item : value) {
@@ -501,40 +534,30 @@ Node loadNodeIndex(std::istream &in, const fs::path &path
 
     parse(ni.mbs, value["mbs"], "mbs");
 
-    if (value.isMember("parentNode")) {
-        ni.parentNode = boost::in_place();
-        parse(*ni.parentNode
-              , Json::check(value["parentNode"], Json::objectValue
-                            , "parentNode")
-              , dir);
-    }
+    parse(ni.parentNode, Json::check(Json::Null
+                                     , value["parentNode"], Json::objectValue
+                                     , "parentNode")
+          , dir);
 
-    if (value.isMember("children")) {
-        parse(ni.children
-              , Json::check(value["children"], Json::arrayValue, "children")
-              , dir);
-    }
+    parse(ni.children
+          , Json::check(Json::Null, value["children"]
+                        , Json::arrayValue, "children")
+          , dir);
 
-    if (value.isMember("neighbors")) {
-        parse(ni.neighbors
-              , Json::check(value["neighbors"], Json::arrayValue, "neighbors")
-              , dir);
-    }
+    parse(ni.neighbors
+          , Json::check(Json::Null, value["neighbors"]
+                        , Json::arrayValue, "neighbors")
+          , dir);
 
-    if (value.isMember("sharedResource")) {
-        ni.sharedResource = boost::in_place();
-        parse(*ni.sharedResource
-              , Json::check(value["sharedResource"], Json::objectValue
-                            , "sharedResource")
-              , dir);
-    }
+    parse(ni.sharedResource
+          , Json::check(Json::Null, value["sharedResource"]
+                        , Json::objectValue, "sharedResource")
+          , dir);
 
-    if (value.isMember("featureData")) {
-        parse(ni.featureData
-              , Json::check(value["featureData"], Json::arrayValue
-                            , "featureData")
-              , dir, store->featureEncoding);
-    }
+    parse(ni.featureData
+          , Json::check(Json::Null, value["featureData"]
+                        , Json::arrayValue, "featureData")
+          , dir, store->featureEncoding);
 
     if (value.isMember("geometryData")) {
         parse(ni.geometryData
@@ -840,27 +863,64 @@ roarchive::IStream::pointer Archive::istream(const fs::path &path) const
     case ResourceCompressionType::gzip: {
         const auto gzPath(utility::addExtension(path, constants::gzExt));
         if (archive_.exists(gzPath)) {
-            // gz path exists
             return archive_.istream
                 (gzPath, [](bio::filtering_istream &fis) {
-#if 1
                     // use raw zlib decompressor, tell zlib to autodetect gzip
                     // header
                     bio::zlib_params p;
                     p.window_bits |= 16;
                     fis.push(bio::zlib_decompressor(p));
-#else
-                    fis.push(bio::gzip_decompressor());
-#endif
                 });
         }
-
         return archive_.istream(path);
     } break;
     }
 
     LOGTHROW(err1, std::runtime_error)
         << "Invalid ResourceCompressionType in metadata.";
+    throw;
+}
+
+roarchive::IStream::pointer
+Archive::istream(const fs::path &path
+                 , const std::initializer_list<const char*> &extensions) const
+{
+    std::size_t left(extensions.size());
+    if (!left) { return istream(path); }
+
+    for (const auto &extension : extensions) {
+        --left;
+        const auto ePath(utility::addExtension(path, extension));
+
+        switch (metadata_.resourceCompressionType) {
+        case ResourceCompressionType::none:
+            if (left && !archive_.exists(ePath)) { continue; }
+            return archive_.istream(path);
+
+        case ResourceCompressionType::gzip: {
+            const auto gzPath(utility::addExtension(ePath, constants::gzExt));
+            if (archive_.exists(ePath)) {
+                return archive_.istream(ePath);
+            } else if (left && !archive_.exists(gzPath)) { continue; }
+
+            return archive_.istream
+                (gzPath, [](bio::filtering_istream &fis) {
+                    // use raw zlib decompressor, tell zlib to autodetect gzip
+                    // header
+                    bio::zlib_params p;
+                    p.window_bits |= 16;
+                    fis.push(bio::zlib_decompressor(p));
+                });
+        } break;
+        }
+
+        LOGTHROW(err1, std::runtime_error)
+            << "Invalid ResourceCompressionType in metadata.";
+        throw;
+    }
+
+    LOGTHROW(err1, std::logic_error)
+        << "Error obtaining stream.";
     throw;
 }
 
@@ -916,7 +976,8 @@ Tree Archive::loadTree() const
 void Archive::loadGeometry(GeometryLoader &loader, const Node &node) const
 {
     for (const auto &resource : node.geometryData) {
-        loadMesh(loader.next(), node, resource, istream(resource.href));
+        loadMesh(loader.next(), node, resource
+                 , istream(resource.href + ".bin"));
     }
 }
 
@@ -994,7 +1055,8 @@ roarchive::IStream::pointer Archive::texture(const Node &node, int index) const
     }
 
     // return stream
-    return istream(node.textureData[i].href);
+    return istream
+        (node.textureData[i].href, { ".bin", pe.encoding->ext.c_str() });
 }
 
 math::Size2 Archive::textureSize(const Node &node, int index) const
@@ -1022,7 +1084,9 @@ math::Size2 Archive::textureSize(const Node &node, int index) const
     }
 
     // return stream
-    return pe.encoding->size2(istream(node.textureData[i].href));
+    return pe.encoding->size2
+        (istream(node.textureData[i].href
+                 , { ".bin", pe.encoding->ext.c_str() }));
 }
 
 geo::SrsDefinition Archive::srs() const
