@@ -38,6 +38,8 @@
 
 #include "geometry/meshop.hpp"
 
+#include "geo/csconvertor.hpp"
+
 #include "slpk/reader.hpp"
 
 namespace po = boost::program_options;
@@ -121,10 +123,23 @@ void writeMtl(const fs::path &path, const std::string &name)
       << "\n";
 }
 
+void localize(geometry::Mesh &mesh)
+{
+    math::Extents3 extents(math::InvalidExtents{});
+    for (const auto &v: mesh.vertices) {
+        math::update(extents, v);
+    }
+
+    const auto c(math::center(extents));
+    for (auto &v: mesh.vertices) {
+        v -= c;
+    }
+}
+
 void write(const slpk::Archive &input, fs::path &output)
 {
     const geo::CsConvertor conv(input.sceneLayerInfo().spatialReference.srs()
-                                , geo::SrsDefinition(3857, ));
+                                , geo::SrsDefinition(3857));
 
     const auto tree(input.loadTree());
     for (const auto &n : tree.nodes) {
@@ -154,6 +169,8 @@ void write(const slpk::Archive &input, fs::path &output)
                 const auto texPath(utility::addExtension(path, ".jpg"));
                 const auto mtlPath(utility::addExtension(path, ".mtl"));
 
+                localize(mesh);
+
                 // save mesh
                 {
                     utility::ofstreambuf os(meshPath.string());
@@ -175,7 +192,7 @@ void write(const slpk::Archive &input, fs::path &output)
 
 int Slpk2Obj::run()
 {
-    write(slpk::Archive(input_, output_));
+    write(slpk::Archive(input_), output_);
     return EXIT_SUCCESS;
 }
 

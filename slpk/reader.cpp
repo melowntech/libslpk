@@ -409,9 +409,11 @@ SceneLayerInfo loadSceneLayerInfo(std::istream &in, const fs::path &path)
     Json::get(sli.layerType, value, "layerType");
 
     // spatial reference:
-    parse(sli.spatialReference
-          , Json::check(value["spatialReference"]
-                        , Json::objectValue, "spatialReference"));
+    if (value.isMember("spatialReference")) {
+        parse(sli.spatialReference
+              , Json::check(value["spatialReference"]
+                             , Json::objectValue, "spatialReference"));
+    }
 
     if (value.isMember("heightModelInfo")) {
         parse(sli.heightModelInfo
@@ -559,19 +561,15 @@ Node loadNodeIndex(std::istream &in, const fs::path &path
                         , Json::arrayValue, "featureData")
           , dir, store->featureEncoding);
 
-    if (value.isMember("geometryData")) {
-        parse(ni.geometryData
-              , Json::check(value["geometryData"], Json::arrayValue
-                            , "geometryData")
-              , dir, store->geometryEncoding);
-    }
+    parse(ni.geometryData
+          , Json::check(Json::Null, value["geometryData"]
+                        , Json::arrayValue, "geometryData")
+          , dir, store->geometryEncoding);
 
-    if (value.isMember("textureData")) {
-        parse(ni.textureData
-              , Json::check(value["textureData"], Json::arrayValue
-                            , "textureData")
-              , dir, store->textureEncoding);
-    }
+    parse(ni.textureData
+          , Json::check(Json::Null, value["textureData"]
+                        , Json::arrayValue, "textureData")
+          , dir, store->textureEncoding);
 
     return ni;
 }
@@ -678,24 +676,48 @@ void loadPerAttributeArray(geometry::ObjParserBase &loader, std::istream &in
             << ") not divisible by 3.";
     }
 
-    geometry::ObjParserBase::Vector3d point;
+    typedef geometry::ObjParserBase Loader;
+    typedef geometry::ObjParserBase::Vector3d Point;
+    typedef std::map<Point, int> PointIndex;
 
-    auto loadVertex([&](const GeometryAttribute &ga)
+    PointIndex vertices;
+    PointIndex tc;
+
+    typedef void (geometry::ObjParserBase::*AddPoint)(const Point&);
+
+    auto pointIndex([&loader](const Point &point, PointIndex &index
+                              , const AddPoint &addPoint) -> int
     {
+        auto findex(index.find(point));
+        if (findex != index.end()) { return findex->second; }
+        const auto i(index.size());
+        index.insert(PointIndex::value_type(point, i));
+        (loader.*addPoint)(point);
+        return i;
+    });
+
+    auto loadVertex([&](const GeometryAttribute &ga) -> int
+    {
+        Point point;
         read(in, ga.valueType, point.x); point.x += node.mbs.x;
         read(in, ga.valueType, point.y); point.y += node.mbs.y;
         read(in, ga.valueType, point.z); point.z += node.mbs.z;
+        return pointIndex(point, vertices, &Loader::addVertex);
     });
 
-    auto loadTxCoord([&](const GeometryAttribute &ga)
+    auto loadTxCoord([&](const GeometryAttribute &ga) -> int
     {
+        Point point;
         read(in, ga.valueType, point.x);
         read(in, ga.valueType, point.y);
         point.y = 1.0 - point.y;
+        return pointIndex(point, tc, &Loader::addTexture);
     });
 
     bool verticesLoaded(false);
-    bool hasTx(false);
+
+    // face accumulator
+    Loader::Facet::list faces(header.vertexCount / 3);
 
     for (const auto &ga : schema.vertexAttributes) {
         if (ga.key == "position") {
@@ -706,9 +728,10 @@ void loadPerAttributeArray(geometry::ObjParserBase &loader, std::istream &in
             }
 
             LOG(debug) << "Loading data for vertices.";
-            for (auto i(header.vertexCount); i; --i) {
-                loadVertex(ga);
-                loader.addVertex(point);
+            for (auto &face : faces) {
+                face.v[0] = loadVertex(ga);
+                face.v[1] = loadVertex(ga);
+                face.v[2] = loadVertex(ga);
             }
             verticesLoaded = true;
         } else if (ga.key == "uv0") {
@@ -719,11 +742,11 @@ void loadPerAttributeArray(geometry::ObjParserBase &loader, std::istream &in
             }
 
             LOG(debug) << "Loading data for texture coordinates.";
-            for (auto i(header.vertexCount); i; --i) {
-                loadTxCoord(ga);
-                loader.addTexture(point);
+            for (auto &face : faces) {
+                face.t[0] = loadTxCoord(ga);
+                face.t[1] = loadTxCoord(ga);
+                face.t[2] = loadTxCoord(ga);
             }
-            hasTx = true;
         } else {
             // ignore everything else
             LOG(debug)
@@ -739,21 +762,8 @@ void loadPerAttributeArray(geometry::ObjParserBase &loader, std::istream &in
             << "No vertex coordinates defined.";
     }
 
-    // 3 vertices -> face
-    for (std::size_t vi(0); vi < header.vertexCount; vi += 3) {
-        geometry::ObjParserBase::Facet f;
-
-        f.v[0] = vi;
-        f.v[1] = vi + 1;
-        f.v[2] = vi + 2;
-        if (hasTx) {
-            f.t[0] = vi;
-            f.t[1] = vi + 1;
-            f.t[2] = vi + 2;
-        }
-
-        loader.addFacet(f);
-    }
+    // feed with faces
+    for (const auto &face : faces) { loader.addFacet(face); }
 }
 
 void loadMesh(geometry::ObjParserBase &loader, const Node &node

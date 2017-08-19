@@ -100,13 +100,15 @@ UTILITY_GENERATE_ENUM(LayerType,
                       )
 
 struct SpatialReference {
-    int wkid;
+    int wkid; // defaults to WGS84
     int latestWkid;
-    int vcsWkid;
+    int vcsWkid; // defaults to EGM96
     int latestVcsWkid;
     std::string wkt;
 
-    SpatialReference() : wkid(), latestWkid(), vcsWkid(), latestVcsWkid() {}
+    SpatialReference()
+        : wkid(4326), latestWkid(), vcsWkid(5773), latestVcsWkid()
+    {}
 
     geo::SrsDefinition srs() const;
 };
