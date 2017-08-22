@@ -38,6 +38,8 @@
 
 #include "geometry/meshop.hpp"
 
+#include "imgproc/readimage.cpp"
+
 #include "geo/csconvertor.hpp"
 
 #include "slpk/reader.hpp"
@@ -247,8 +249,12 @@ void write(const slpk::Archive &input, fs::path &output
             const auto meshPath(utility::addExtension(path, ".obj"));
             create_directories(meshPath.parent_path());
 
-            // TODO get extension from internals
-            const auto texPath(utility::addExtension(path, ".jpg"));
+            auto texture(input.texture(node, meshIndex));
+
+            // detect extension
+            const auto texPath(utility::addExtension
+                               (path, imgproc::imageType
+                                (*texture, texture->path())));
             const auto mtlPath(utility::addExtension(path, ".mtl"));
 
             // save mesh

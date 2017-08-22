@@ -44,7 +44,7 @@
 #include "utility/uri.hpp"
 #include "utility/binaryio.hpp"
 
-#include "imgproc/jpeg.hpp"
+#include "imgproc/readimage.hpp"
 
 #include "jsoncpp/json.hpp"
 #include "jsoncpp/as.hpp"
@@ -71,24 +71,18 @@ const fs::path gzExt(".gz");
 struct ExtInfo {
     std::string extension;
     int preference;
-    Size2Function size2;
 
-    ExtInfo(const std::string &extension = "", int preference = -1
-            , const Size2Function &size2 = Size2Function())
-        : extension(extension), preference(preference), size2(size2)
+    ExtInfo(const std::string &extension = "", int preference = -1)
+        : extension(extension), preference(preference)
     {}
 };
 
 typedef std::map<std::string, ExtInfo> MIMEMapping;
 
-const auto jpegSize([](const roarchive::IStream::pointer &is) {
-        return imgproc::jpegSize(is->get(), is->path());
-    });
-
 const MIMEMapping mimeMapping {
     { "application/octet-stream", { ".bin", 0 } }
     , { "image/tiff", { ".tiff", 5 } }
-    , { "image/jpeg", { ".jpg", 30, jpegSize } }
+    , { "image/jpeg", { ".jpg", 30 } }
     , { "image/png", { ".png", 20 } }
     , { "image/vnd-ms.dds", { ".bin.dds", -1 } }
 };
@@ -336,7 +330,6 @@ void parse(Encoding &encoding, const Json::Value &value, const char *key
     const auto &ei(extFromMime(encoding.mime));
     encoding.ext = ei.extension;
     encoding.preference = ei.preference;
-    encoding.size2 = ei.size2;
 }
 
 void parse(Encoding::list &el, const Json::Value &value
@@ -350,7 +343,6 @@ void parse(Encoding::list &el, const Json::Value &value
         const auto &ei(extFromMime(encoding.mime));
         encoding.ext = ei.extension;
         encoding.preference = ei.preference;
-        encoding.size2 = ei.size2;
     }
 }
 
@@ -1078,12 +1070,6 @@ math::Size2 Archive::textureSize(const Node &node, int index) const
             << "No supported texture available for node <" << node.id << ">.";
     }
 
-    if (!pe.encoding->size2) {
-        LOGTHROW(err1, std::runtime_error)
-            << "Unable to measure images of MIME type <" << pe.encoding->mime
-            << "> from node <" <<  node.id << ">.";
-    }
-
     // calculate index in provided textures
     const auto i(index * node.store().textureEncoding.size() + pe.index);
 
@@ -1093,10 +1079,12 @@ math::Size2 Archive::textureSize(const Node &node, int index) const
             << pe.encoding->mime << "> from node <" <<  node.id << ">.";
     }
 
-    // return stream
-    return pe.encoding->size2
-        (istream(node.textureData[i].href
-                 , { ".bin", pe.encoding->ext.c_str() }));
+    // get file stream
+    auto is(istream(node.textureData[i].href
+                    , { ".bin", pe.encoding->ext.c_str() }));
+
+    // try to measure the image
+    return imgproc::imageSize(*is, is->path());
 }
 
 geo::SrsDefinition Archive::srs() const
