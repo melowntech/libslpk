@@ -54,9 +54,8 @@ class Slpk2Obj : public service::Cmdline
 public:
     Slpk2Obj()
         : service::Cmdline("slpk2obj", BUILD_TARGET_VERSION)
-        , overwrite_(false)
-    {
-    }
+        , overwrite_(false), srs_(3857)
+    {}
 
 private:
     virtual void configuration(po::options_description &cmdline
@@ -75,6 +74,7 @@ private:
     fs::path output_;
     fs::path input_;
     bool overwrite_;
+    geo::SrsDefinition srs_;
 };
 
 void Slpk2Obj::configuration(po::options_description &cmdline
@@ -83,10 +83,12 @@ void Slpk2Obj::configuration(po::options_description &cmdline
 {
     cmdline.add_options()
         ("output", po::value(&output_)->required()
-         , "Path to output (obj) tile set.")
+         , "Path to output converted input.")
         ("input", po::value(&input_)->required()
          , "Path to input SLPK archive.")
-        ("overwrite", "Existing tile set gets overwritten if set.")
+        ("overwrite", "Generate output even if output directory exists.")
+        ("srs", po::value(&srs_)->default_value(srs_)->required()
+         , "Destination SRS of converted meshes.")
         ;
 
     pd
@@ -105,9 +107,11 @@ bool Slpk2Obj::help(std::ostream &out, const std::string &what) const
 {
     if (what.empty()) {
         out << R"RAW(slpk2obj
+
+    Converts SLPK archive into textured meshes in OBJ format.
+
 usage
     slpk2obj INPUT OUTPUT [OPTIONS]
-
 )RAW";
     }
     return false;
@@ -123,76 +127,152 @@ void writeMtl(const fs::path &path, const std::string &name)
       << "\n";
 }
 
-void localize(geometry::Mesh &mesh)
+/** Loads SLPK geometry as a list of submeshes.
+ */
+class MeasureMesh
+    : public slpk::GeometryLoader
+    , public geometry::ObjParserBase
 {
-    math::Extents3 extents(math::InvalidExtents{});
-    for (const auto &v: mesh.vertices) {
-        math::update(extents, v);
+public:
+    MeasureMesh(const geo::CsConvertor &conv, math::Extents2 &extents)
+        : conv_(conv), extents_(extents)
+    {}
+
+    virtual geometry::ObjParserBase& next() { return *this; }
+
+    virtual void addVertex(const Vector3d &v) {
+        math::update(extents_, conv_(math::Point2(v.x, v.y)));
     }
 
-    const auto c(math::center(extents));
-    for (auto &v: mesh.vertices) {
-        v -= c;
+private:
+    virtual void addTexture(const Vector3d&) {}
+    virtual void addFacet(const Facet&) {}
+    virtual void addNormal(const Vector3d&) {}
+    virtual void materialLibrary(const std::string&) {}
+    virtual void useMaterial(const std::string&) {}
+
+    const geo::CsConvertor &conv_;
+    math::Extents2 &extents_;
+};
+
+math::Extents2 measureMesh(const slpk::Tree &tree
+                           , const slpk::Archive &input
+                           , const geo::CsConvertor &conv)
+{
+    // find topLevel
+    auto topLevel(std::numeric_limits<int>::max());
+
+    for (const auto item : tree.nodes) {
+        const auto &node(item.second);
+        if (node.hasGeometry()) {
+            topLevel = std::min(topLevel, node.level);
+        }
     }
+
+    // collect nodes for OpenMP
+    std::vector<const slpk::Node*> nodes;
+    for (const auto &item : tree.nodes) {
+        const auto &node(item.second);
+        if ((node.level == topLevel) && (node.hasGeometry())) {
+            nodes.push_back(&node);
+        }
+    }
+
+    const auto *pnodes(&nodes);
+
+    math::Extents2 extents(math::InvalidExtents{});
+    auto *pextents(&extents);
+
+    UTILITY_OMP(parallel for)
+    for (std::size_t i = 0; i < nodes.size(); ++i) {
+        const auto &node(*(*pnodes)[i]);
+
+        // load geometry
+        math::Extents2 e(math::InvalidExtents{});
+        MeasureMesh loader(conv, e);;
+        input.loadGeometry(loader, node);
+
+        UTILITY_OMP(critical(slpk2obj_measureMesh))
+        {
+            math::update(*pextents, e.ll);
+            math::update(*pextents, e.ur);
+        }
+    }
+
+    return extents;
 }
 
-void write(const slpk::Archive &input, fs::path &output)
+void write(const slpk::Archive &input, fs::path &output
+           , const geo::SrsDefinition &srs)
 {
-    const geo::CsConvertor conv(input.sceneLayerInfo().spatialReference.srs()
-                                , geo::SrsDefinition(3857));
+    const geo::CsConvertor conv
+        (input.sceneLayerInfo().spatialReference.srs(), srs);
 
     const auto tree(input.loadTree());
-    for (const auto &n : tree.nodes) {
-        const auto &node(n.second);
-        LOG(info4) << n.first;
-        LOG(info4) << "    geometry:";
-        for (const auto &r : node.geometryData) {
-            LOG(info4) << "        " << r.href << " " << r.encoding->mime;
-        }
-        LOG(info4) << "    texture:";
-        for (const auto &r : node.textureData) {
-            LOG(info4) << "        " << r.href << " " << r.encoding->mime;
-        }
+
+    // find extents in destination SRS to localize mesh
+    const auto extents(measureMesh(tree, input, conv));
+    const auto center(math::center(extents));
+    LOG(info4) << std::fixed << "extents: " << extents
+               << ", center: " << center;
+
+    // collect nodes for OpenMP
+    std::vector<const slpk::Node*> nodes;
+    for (const auto &item : tree.nodes) {
+        nodes.push_back(&item.second);
+    }
+
+    const auto *pnodes(&nodes);
+    const auto *pconv(&conv);
+    const auto *pcenter(&center);
+
+    UTILITY_OMP(parallel for)
+    for (std::size_t i = 0; i < nodes.size(); ++i) {
+        const auto &node(*(*pnodes)[i]);
+        const auto &conv(*pconv);
+        const auto &center(*pcenter);
+
+        LOG(info4) << "Exporting <" << node.id << ">.";
 
         auto geometry(input.loadGeometry(node));
 
-        {
-            auto igd(node.geometryData.begin());
-            int meshIndex(0);
-            for (auto &mesh : geometry) {
-                for (auto &v : mesh.vertices) { v = conv(v); }
-                const fs::path path(output / (*igd++).href);
-                const auto meshPath(utility::addExtension(path, ".obj"));
-                create_directories(meshPath.parent_path());
-
-                // TODO get extension from internals
-                const auto texPath(utility::addExtension(path, ".jpg"));
-                const auto mtlPath(utility::addExtension(path, ".mtl"));
-
-                localize(mesh);
-
-                // save mesh
-                {
-                    utility::ofstreambuf os(meshPath.string());
-                    os.precision(12);
-                    saveAsObj(mesh, os, mtlPath.filename().string());
-                    os.flush();
-                }
-
-                // copy texture as-is
-                copy(input.texture(node, meshIndex), texPath);
-
-                writeMtl(mtlPath, texPath.filename().string());
-
-                ++meshIndex;
+        auto igd(node.geometryData.begin());
+        int meshIndex(0);
+        for (auto &mesh : geometry) {
+            for (auto &v : mesh.vertices) {
+                v = conv(v) - center;
             }
+
+            const fs::path path(output / (*igd++).href);
+            const auto meshPath(utility::addExtension(path, ".obj"));
+            create_directories(meshPath.parent_path());
+
+            // TODO get extension from internals
+            const auto texPath(utility::addExtension(path, ".jpg"));
+            const auto mtlPath(utility::addExtension(path, ".mtl"));
+
+            // save mesh
+            {
+                utility::ofstreambuf os(meshPath.string());
+                os.precision(12);
+                saveAsObj(mesh, os, mtlPath.filename().string());
+                os.flush();
+            }
+
+            // copy texture as-is
+            copy(input.texture(node, meshIndex), texPath);
+            writeMtl(mtlPath, texPath.filename().string());
+            ++meshIndex;
         }
     }
 }
 
 int Slpk2Obj::run()
 {
-    write(slpk::Archive(input_), output_);
+    LOG(info4) << "Opening SLPK archive at " << input_ << ".";
+    slpk::Archive archive(input_);
+    LOG(info4) << "Generating textured meshes at " << output_ << ".";
+    write(archive, output_, srs_);
     return EXIT_SUCCESS;
 }
 
