@@ -39,15 +39,33 @@
 
 namespace slpk {
 
+typedef math::Point3_<int> Face;
+typedef std::vector<Face> Faces;
+typedef math::Extents2i Region;
+
+class MeshLoader {
+public:
+    typedef slpk::Face Face;
+    typedef slpk::Region Region;
+
+    virtual ~MeshLoader() {}
+    virtual void addVertex(const math::Point3d&) = 0;
+    virtual void addTexture(const math::Point2d&) = 0;
+    virtual void addNormal(const math::Point3d&) = 0;
+    virtual void addFace(const Face &mesh, const Face &tc = Face()
+                         , const Face &normal = Face()) = 0;
+    virtual void addTxRegion(const Region &region) = 0;
+};
+
 /** Abstract geometry loader.
  */
 class GeometryLoader {
 public:
     virtual ~GeometryLoader() {}
 
-    /** Get reference to next mesh.
+    /** Get reference to next mesh loader.
      */
-    virtual geometry::ObjParserBase& next() = 0;
+    virtual MeshLoader& next() = 0;
 };
 
 /** SLPK archive reader

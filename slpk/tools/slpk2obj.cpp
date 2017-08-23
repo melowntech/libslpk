@@ -133,25 +133,24 @@ void writeMtl(const fs::path &path, const std::string &name)
  */
 class MeasureMesh
     : public slpk::GeometryLoader
-    , public geometry::ObjParserBase
+    , public slpk::MeshLoader
 {
 public:
     MeasureMesh(const geo::CsConvertor &conv, math::Extents2 &extents)
         : conv_(conv), extents_(extents)
     {}
 
-    virtual geometry::ObjParserBase& next() { return *this; }
+    virtual slpk::MeshLoader& next() { return *this; }
 
-    virtual void addVertex(const Vector3d &v) {
-        math::update(extents_, conv_(math::Point2(v.x, v.y)));
+    virtual void addVertex(const math::Point3d &v) {
+        math::update(extents_, conv_(v));
     }
 
 private:
-    virtual void addTexture(const Vector3d&) {}
-    virtual void addFacet(const Facet&) {}
-    virtual void addNormal(const Vector3d&) {}
-    virtual void materialLibrary(const std::string&) {}
-    virtual void useMaterial(const std::string&) {}
+    virtual void addTexture(const math::Point2d&) {}
+    virtual void addFace(const Face&, const Face&, const Face&) {}
+    virtual void addNormal(const math::Point3d&) {}
+    virtual void addTxRegion(const Region&) {}
 
     const geo::CsConvertor &conv_;
     math::Extents2 &extents_;
@@ -159,7 +158,7 @@ private:
 
 math::Extents2 measureMesh(const slpk::Tree &tree
                            , const slpk::Archive &input
-                           , const geo::CsConvertor &conv)
+                           , geo::CsConvertor conv)
 {
     // find topLevel
     auto topLevel(std::numeric_limits<int>::max());
@@ -191,7 +190,7 @@ math::Extents2 measureMesh(const slpk::Tree &tree
 
         // load geometry
         math::Extents2 e(math::InvalidExtents{});
-        MeasureMesh loader(conv, e);;
+        MeasureMesh loader(conv, e);
         input.loadGeometry(loader, node);
 
         UTILITY_OMP(critical(slpk2obj_measureMesh))
@@ -207,7 +206,7 @@ math::Extents2 measureMesh(const slpk::Tree &tree
 void write(const slpk::Archive &input, fs::path &output
            , const geo::SrsDefinition &srs)
 {
-    const geo::CsConvertor conv
+    geo::CsConvertor conv
         (input.sceneLayerInfo().spatialReference.srs(), srs);
 
     const auto tree(input.loadTree());
@@ -225,13 +224,11 @@ void write(const slpk::Archive &input, fs::path &output
     }
 
     const auto *pnodes(&nodes);
-    const auto *pconv(&conv);
     const auto *pcenter(&center);
 
     UTILITY_OMP(parallel for)
     for (std::size_t i = 0; i < nodes.size(); ++i) {
         const auto &node(*(*pnodes)[i]);
-        const auto &conv(*pconv);
         const auto &center(*pcenter);
 
         LOG(info4) << "Exporting <" << node.id << ">.";

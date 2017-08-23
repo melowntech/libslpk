@@ -654,7 +654,55 @@ Header loadHeader(std::istream &in, const HeaderAttribute::list &has)
     return h;
 }
 
-void loadPerAttributeArray(geometry::ObjParserBase &loader, std::istream &in
+
+struct Fuser {
+    Fuser(std::istream &in, MeshLoader &loader, const Node &node)
+        : in_(in), loader_(loader), node_(node)
+    {}
+
+    int vertex(const GeometryAttribute &ga) {
+        math::Point3d point;
+        read(in_, ga.valueType, point(0)); point(0) += node_.mbs.x;
+        read(in_, ga.valueType, point(1)); point(1) += node_.mbs.y;
+        read(in_, ga.valueType, point(2)); point(2) += node_.mbs.z;
+        return add(point, vertices_, &MeshLoader::addVertex);
+    }
+
+    int tc(const GeometryAttribute &ga)  {
+        math::Point2d point;
+        read(in_, ga.valueType, point(0));
+        read(in_, ga.valueType, point(1));
+
+        // flip Y coord
+        point(1) = 1.0 - point(1);
+        return add(point, tc_, &MeshLoader::addTexture);
+    }
+
+private:
+    template <typename PointType>
+    int add(const PointType &point, std::map<PointType, int> &index
+            , void (MeshLoader::*addPoint)(const PointType&))
+    {
+        auto findex(index.find(point));
+        if (findex != index.end()) { return findex->second; }
+        const auto i(index.size());
+        index.insert(typename std::map<PointType, int>::value_type(point, i));
+        (loader_.*addPoint)(point);
+        return i;
+    }
+
+    std::istream &in_;
+    MeshLoader &loader_;
+    const Node &node_;
+
+    typedef std::map<math::Point3d, int> VertexMap;
+    typedef std::map<math::Point2d, int> TextureMap;
+
+    VertexMap vertices_;
+    TextureMap tc_;
+};
+
+void loadPerAttributeArray(MeshLoader &loader, std::istream &in
                            , const Node &node, const Header &header
                            , const GeometrySchema &schema)
 {
@@ -668,48 +716,13 @@ void loadPerAttributeArray(geometry::ObjParserBase &loader, std::istream &in
             << ") not divisible by 3.";
     }
 
-    typedef geometry::ObjParserBase Loader;
-    typedef geometry::ObjParserBase::Vector3d Point;
-    typedef std::map<Point, int> PointIndex;
-
-    PointIndex vertices;
-    PointIndex tc;
-
-    typedef void (geometry::ObjParserBase::*AddPoint)(const Point&);
-
-    auto pointIndex([&loader](const Point &point, PointIndex &index
-                              , const AddPoint &addPoint) -> int
-    {
-        auto findex(index.find(point));
-        if (findex != index.end()) { return findex->second; }
-        const auto i(index.size());
-        index.insert(PointIndex::value_type(point, i));
-        (loader.*addPoint)(point);
-        return i;
-    });
-
-    auto loadVertex([&](const GeometryAttribute &ga) -> int
-    {
-        Point point;
-        read(in, ga.valueType, point.x); point.x += node.mbs.x;
-        read(in, ga.valueType, point.y); point.y += node.mbs.y;
-        read(in, ga.valueType, point.z); point.z += node.mbs.z;
-        return pointIndex(point, vertices, &Loader::addVertex);
-    });
-
-    auto loadTxCoord([&](const GeometryAttribute &ga) -> int
-    {
-        Point point;
-        read(in, ga.valueType, point.x);
-        read(in, ga.valueType, point.y);
-        point.y = 1.0 - point.y;
-        return pointIndex(point, tc, &Loader::addTexture);
-    });
-
     bool verticesLoaded(false);
 
+    Fuser fuser(in, loader, node);
+
     // face accumulator
-    Loader::Facet::list faces(header.vertexCount / 3);
+    Faces faces(header.vertexCount / 3);
+    Faces facesTc(header.vertexCount / 3);
 
     for (const auto &ga : schema.vertexAttributes) {
         if (ga.key == "position") {
@@ -721,9 +734,9 @@ void loadPerAttributeArray(geometry::ObjParserBase &loader, std::istream &in
 
             LOG(debug) << "Loading data for vertices.";
             for (auto &face : faces) {
-                face.v[0] = loadVertex(ga);
-                face.v[1] = loadVertex(ga);
-                face.v[2] = loadVertex(ga);
+                face(0) = fuser.vertex(ga);
+                face(1) = fuser.vertex(ga);
+                face(2) = fuser.vertex(ga);
             }
             verticesLoaded = true;
         } else if (ga.key == "uv0") {
@@ -734,10 +747,10 @@ void loadPerAttributeArray(geometry::ObjParserBase &loader, std::istream &in
             }
 
             LOG(debug) << "Loading data for texture coordinates.";
-            for (auto &face : faces) {
-                face.t[0] = loadTxCoord(ga);
-                face.t[1] = loadTxCoord(ga);
-                face.t[2] = loadTxCoord(ga);
+            for (auto &face : facesTc) {
+                face(0) = fuser.tc(ga);
+                face(1) = fuser.tc(ga);
+                face(2) = fuser.tc(ga);
             }
         } else {
             // ignore everything else
@@ -754,11 +767,14 @@ void loadPerAttributeArray(geometry::ObjParserBase &loader, std::istream &in
             << "No vertex coordinates defined.";
     }
 
-    // feed with faces
-    for (const auto &face : faces) { loader.addFacet(face); }
+    // feed loader with faces
+    auto ifacesTc(facesTc.begin());
+    for (const auto &face : faces) {
+        loader.addFace(face, *ifacesTc++);
+    }
 }
 
-void loadMesh(geometry::ObjParserBase &loader, const Node &node
+void loadMesh(MeshLoader &loader, const Node &node
               , const Resource &
               , std::istream &in, const fs::path &path)
 {
@@ -802,7 +818,7 @@ void loadMesh(geometry::ObjParserBase &loader, const Node &node
 
 }
 
-void loadMesh(geometry::ObjParserBase &loader, const Node &node
+void loadMesh(MeshLoader &loader, const Node &node
               , const Resource &resource
               , const roarchive::IStream::pointer &istream)
 {
@@ -985,16 +1001,16 @@ void Archive::loadGeometry(GeometryLoader &loader, const Node &node) const
 
 namespace {
 
-class MeshLoader
+class SimpleMeshLoader
     : public GeometryLoader
-    , public geometry::ObjParserBase
+    , public MeshLoader
 {
 public:
-    MeshLoader(std::size_t count)
+    SimpleMeshLoader(std::size_t count)
         : meshes_(count), current_(nullptr)
     {}
 
-    virtual geometry::ObjParserBase& next() {
+    virtual MeshLoader& next() {
         if (!current_) {
             current_ = meshes_.data();
         } else {
@@ -1007,22 +1023,23 @@ public:
         return std::move(meshes_);
     }
 
-    virtual void addVertex(const Vector3d &v) {
-        current_->vertices.emplace_back(v.x, v.y, v.z);
+    virtual void addVertex(const math::Point3d &v) {
+        current_->vertices.push_back(v);
     }
 
-    virtual void addTexture(const Vector3d &t) {
-        current_->tCoords.emplace_back(t.x, t.y);
+    virtual void addTexture(const math::Point2d &t) {
+        current_->tCoords.push_back(t);
     }
 
-    virtual void addFacet(const Facet &f) {
-        current_->faces.emplace_back(f.v[0], f.v[1], f.v[2]
-                                     , f.t[0], f.t[1], f.t[2]);
+    virtual void addFace(const Face &mesh, const Face &tc, const Face&)
+    {
+        current_->faces.emplace_back(mesh(0), mesh(1), mesh(2)
+                                     , tc(0), tc(1), tc(2));
     }
 
-    virtual void addNormal(const Vector3d&) {}
+    virtual void addNormal(const math::Point3d&) {}
     virtual void materialLibrary(const std::string&) {}
-    virtual void useMaterial(const std::string&) {}
+    virtual void addTxRegion(const Region&) {};
 
 private:
     geometry::Mesh::list meshes_;
@@ -1033,7 +1050,7 @@ private:
 
 geometry::Mesh::list Archive::loadGeometry(const Node &node) const
 {
-    MeshLoader loader(node.geometryData.size());
+    SimpleMeshLoader loader(node.geometryData.size());
     loadGeometry(loader, node);
     return loader.moveoutMeshes();
 }
