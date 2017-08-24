@@ -245,8 +245,8 @@ cv::Mat stream2mat(const roarchive::IStream::pointer &txStream)
     return image;
 }
 
-inline double remap(int size, int coord) {
-    return size * (coord / 65535.0);
+inline double remap(long size, long coord) {
+    return ((size * coord) / 65535.0);
 }
 
 inline math::Extents2 remap(const math::Size2 &size
@@ -319,7 +319,7 @@ void rebuild(slpk::SubMesh &submesh
     // map texture coordinates to new texture
 
     seen.assign(mesh.tCoords.size(), false);
-    const auto map([&](const imgproc::tx::Patch &patch, int index)
+    const auto map([&](const imgproc::tx::Patch &patch, int index) -> void
     {
         // skip mapped tc
         auto &iseen(seen[index]);
@@ -331,6 +331,9 @@ void rebuild(slpk::SubMesh &submesh
         // and normalize
         tc(0) /= size.width;
         tc(1) /= size.height;
+
+        // is it really needed?
+        tc(1) = 1.0 - tc(1);
 
         iseen = true;
     });
@@ -348,35 +351,35 @@ void rebuild(slpk::SubMesh &submesh
     // generate new texture
     cv::Mat_<cv::Vec3b> otx(size.height, size.width, cv::Vec3b());
 
-    // TODO: implement me
+    const auto wrap([&](int pos, int origin, int size) -> int
+    {
+        auto mod(pos % size);
+        if (mod < 0) { mod += size; }
+        return origin + mod;
+    });
+
     auto iuvRects(uvRects.begin());
     for (const auto &patch : patches) {
         const auto &uvRect(*iuvRects++);
         const auto &dstRect(patch.dst());
-        const math::Point2i diff(dstRect.point - uvRect.point);
+        const auto &srcRect(patch.src());
+        const math::Point2i diff(uvRect.point - srcRect.point);
 
         // copy data
-        for (int j(dstRect.point(1)), je(j + dstRect.size.height);
-             j != je; ++j)
-        {
-            if ((j < 0) || (j >= size.height)) { continue; }
-
-            const auto jsrc(uvRect.point(1)
-                            + (j - diff(1)) % uvRect.size.height);
+        for (int j(0), je(dstRect.size.height); j != je; ++j) {
+            const auto jsrc(wrap(j - diff(1), uvRect.point(1)
+                                 , uvRect.size.height));
 
             if ((jsrc < 0) || (jsrc >= txSize.height)) { continue; }
 
-            for (int i(dstRect.point(0)), ie(i + dstRect.size.width);
-                 i != ie; ++i)
-            {
-                if ((i < 0) || (i >= size.width)) { continue; }
-
-                const auto isrc(uvRect.point(0)
-                                + (i - diff(0)) % uvRect.size.width);
+            for (int i(0), ie(dstRect.size.width); i != ie; ++i) {
+                const auto isrc(wrap(i - diff(0), uvRect.point(0)
+                                     , uvRect.size.width));
 
                 if ((isrc < 0) || (isrc >= txSize.width)) { continue; }
 
-                otx(j, i) = tx.at<cv::Vec3b>(jsrc, isrc);
+                otx(dstRect.point(1) + j, dstRect.point(0) + i)
+                    = tx.at<cv::Vec3b>(jsrc, isrc);
             }
         }
     }
@@ -421,7 +424,9 @@ void write(const slpk::Archive &input, fs::path &output
         for (auto &submesh : geometry.submeshes) {
             auto &mesh(submesh.mesh);
             for (auto &v : mesh.vertices) {
-                v = conv(v) - center;
+                v = conv(v);
+                v(0) -= center(0);
+                v(1) -= center(1);
             }
 
             const fs::path path(output / (*igd++).href);
