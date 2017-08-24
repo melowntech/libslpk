@@ -27,6 +27,7 @@
 #include <map>
 #include <queue>
 #include <string>
+#include <tuple>
 #include <fstream>
 
 #include <boost/utility/in_place_factory.hpp>
@@ -654,19 +655,171 @@ Header loadHeader(std::istream &in, const HeaderAttribute::list &has)
     return h;
 }
 
+namespace paa {
 
-struct Fuser {
-    Fuser(std::istream &in, MeshLoader &loader, const Node &node)
-        : in_(in), loader_(loader), node_(node)
-    {}
+struct CompareRegion {
+    bool operator()(const Region &r1, const Region &r2) {
+        if (r1.ll < r2.ll) { return true; }
+        if (r2.ll < r1.ll) { return false; }
+        return r1.ur < r2.ur;
+    }
+};
+
+template <typename AddValueType, typename T>
+void callAddValue(MeshLoader &loader, const AddValueType &addValue
+                  , const T &value)
+{
+    (loader.*addValue)(value);
+}
+
+template <typename AddValueType, typename T1, typename T2>
+void callAddValue(MeshLoader &loader, const AddValueType &addValue
+                  , const std::tuple<T1, T2> &value)
+{
+    (loader.*addValue)(std::get<0>(value));
+}
+
+class Fuser {
+public:
+    Fuser(std::istream &in, MeshLoader &loader, const Node &node
+          , const Header &header)
+        : in_(in), loader_(loader), node_(node), header_(header)
+        , verticesLoaded_(false)
+        , faces_(header.vertexCount / 3), facesTc_(header.vertexCount / 3)
+    {
+        if (header.vertexCount % 3) {
+            LOGTHROW(err1, std::runtime_error)
+                << "Invalid number of vertices in PerAttributeArray layout: "
+                "number of vertices (" << header.vertexCount
+                << ") not divisible by 3.";
+        }
+    }
+
+    virtual ~Fuser() {}
+
+    void operator()(const GeometrySchema &schema) {
+        for (const auto &ga : schema.vertexAttributes) {
+            if (ga.key == "position") {
+                loadFaces(ga);
+                verticesLoaded_ = true;
+            } else if (ga.key == "uv0") {
+                loadTcFaces(ga);
+            } else if (ga.key == "region") {
+                loadTxRegions(ga);
+            } else {
+                ignore(ga);
+            }
+        }
+
+        if (!verticesLoaded_) {
+            LOGTHROW(err1, std::runtime_error)
+                << "No vertex coordinates defined.";
+        }
+
+        // finalize lod
+        finalize();
+
+        // feed loader with faces
+        auto ifacesTc(facesTc_.begin());
+        for (const auto &face : faces_) {
+            loader_.addFace(face, *ifacesTc++);
+        }
+    }
+
+protected:
+    /** Adds new value to an index. Returns position of exiting entry if value
+     *  was already added. Otherwise inserts new entery and returns its
+     *  position in the index.
+     *
+     *  Position is computed from size of index or via provided counter.
+     */
+    template <typename Index, typename AddValueType, typename T>
+    int add(Index &index, const AddValueType &addValue
+            , const T &value, std::size_t *counter = nullptr)
+    {
+        auto findex(index.find(value));
+        if (findex != index.end()) { return findex->second; }
+        const auto i(counter ? (*counter)++ : index.size());
+        index.insert(typename Index::value_type(value, i));
+        callAddValue(loader_, addValue, value);
+        return i;
+    }
 
     int vertex(const GeometryAttribute &ga) {
         math::Point3d point;
         read(in_, ga.valueType, point(0)); point(0) += node_.mbs.x;
         read(in_, ga.valueType, point(1)); point(1) += node_.mbs.y;
         read(in_, ga.valueType, point(2)); point(2) += node_.mbs.z;
-        return add(point, vertices_, &MeshLoader::addVertex);
+        return add(vertices_, &MeshLoader::addVertex, point);
     }
+
+    void loadFaces(const GeometryAttribute &ga) {
+        if (ga.valuesPerElement != 3) {
+            LOGTHROW(err1, std::runtime_error)
+                << "Number of vertex elements must be 3 not "
+                << ga.valuesPerElement << ".";
+        }
+
+        LOG(debug) << "Loading data for vertices.";
+        for (auto &face : faces_) {
+            face(0) = vertex(ga);
+            face(1) = vertex(ga);
+            face(2) = vertex(ga);
+        }
+    }
+
+    virtual void loadTcFaces(const GeometryAttribute &ga) = 0;
+    virtual void loadTxRegions(const GeometryAttribute &ga) { ignore(ga); }
+    virtual void finalize() = 0;
+
+    void ignore(const GeometryAttribute &ga) {
+        LOG(debug)
+            << "Ignoring data for unsupported vertex attribute <"
+            << ga.key << "> (" << (header_.vertexCount * byteCount(ga))
+            << " bytes).";
+        in_.ignore(header_.vertexCount * byteCount(ga));
+    }
+
+    std::istream &in_;
+    MeshLoader &loader_;
+    const Node &node_;
+    const Header &header_;
+    bool verticesLoaded_;
+
+    typedef std::map<math::Point3d, int> VertexMap;
+    typedef std::map<math::Point2d, int> TextureMap;
+    typedef std::vector<TextureMap> TextureMaps;
+    typedef std::map<Region, int, CompareRegion> RegionMap;
+
+    Faces faces_;
+    FacesTc facesTc_;
+    VertexMap vertices_;
+};
+
+class SimpleFuser : public Fuser {
+public:
+    SimpleFuser(std::istream &in, MeshLoader &loader, const Node &node
+                , const Header &header)
+        : Fuser(in, loader, node, header)
+    {}
+
+private:
+    void loadTcFaces(const GeometryAttribute &ga) {
+        if (ga.valuesPerElement != 2) {
+            LOGTHROW(err1, std::runtime_error)
+                << "Number of UV elements must be 2 not "
+                << ga.valuesPerElement << ".";
+        }
+
+        LOG(debug) << "Loading data for texture coordinates.";
+        for (auto &face : facesTc_) {
+            face(0) = tc(ga);
+            face(1) = tc(ga);
+            face(2) = tc(ga);
+        }
+    }
+
+    void finalize() {}
 
     int tc(const GeometryAttribute &ga)  {
         math::Point2d point;
@@ -675,104 +828,115 @@ struct Fuser {
 
         // flip Y coord
         point(1) = 1.0 - point(1);
-        return add(point, tc_, &MeshLoader::addTexture);
+        return add(tc_, &MeshLoader::addTexture, point);
     }
 
-private:
-    template <typename PointType>
-    int add(const PointType &point, std::map<PointType, int> &index
-            , void (MeshLoader::*addPoint)(const PointType&))
-    {
-        auto findex(index.find(point));
-        if (findex != index.end()) { return findex->second; }
-        const auto i(index.size());
-        index.insert(typename std::map<PointType, int>::value_type(point, i));
-        (loader_.*addPoint)(point);
-        return i;
-    }
-
-    std::istream &in_;
-    MeshLoader &loader_;
-    const Node &node_;
-
-    typedef std::map<math::Point3d, int> VertexMap;
-    typedef std::map<math::Point2d, int> TextureMap;
-
-    VertexMap vertices_;
     TextureMap tc_;
 };
 
-void loadPerAttributeArray(MeshLoader &loader, std::istream &in
-                           , const Node &node, const Header &header
-                           , const GeometrySchema &schema)
+class RegionFuser : public Fuser {
+public:
+    RegionFuser(std::istream &in, MeshLoader &loader, const Node &node
+                , const Header &header)
+        : Fuser(in, loader, node, header)
+        , regions_(header.vertexCount)
+    {}
+
+private:
+    void loadTcFaces(const GeometryAttribute &ga) {
+        if (ga.valuesPerElement != 2) {
+            LOGTHROW(err1, std::runtime_error)
+                << "Number of UV elements must be 2 not "
+                << ga.valuesPerElement << ".";
+        }
+
+        LOG(debug) << "Loading data for texture coordinates.";
+        for (auto &face : facesTc_) {
+            face(0) = tc(ga);
+            face(1) = tc(ga);
+            face(2) = tc(ga);
+        }
+    }
+
+    int tc(const GeometryAttribute &ga)  {
+        const auto index(tc_.size());
+        tc_.emplace_back();
+        auto &point(tc_.back());
+
+        read(in_, ga.valueType, point(0));
+        read(in_, ga.valueType, point(1));
+        // flip Y coord
+        point(1) = 1.0 - point(1);
+
+        return index;
+    }
+
+    void loadTxRegions(const GeometryAttribute &ga) {
+        for (auto &regionIndex : regions_) {
+            Region region;
+            read(in_, ga.valueType, region.ll(0));
+            read(in_, ga.valueType, region.ll(1));
+            read(in_, ga.valueType, region.ur(0));
+            read(in_, ga.valueType, region.ur(1));
+
+            regionIndex = add(regionMap_, &MeshLoader::addTxRegion, region);
+        }
+    }
+
+    void finalize() {
+        // generate texture coordinates
+
+        // multiple texturing maps, one per region
+        TextureMaps tcMaps(regionMap_.size());
+
+        auto itc(tc_.begin());
+        auto iregions(regions_.begin());
+        std::size_t counter(0);
+        for (auto &face : facesTc_) {
+            const auto &region(*iregions++);
+            const auto &region2(*iregions++);
+            const auto &region3(*iregions++);
+
+            auto &tcMap(tcMaps[region]);
+            face.region = region;
+            face(0) = add(tcMap, &MeshLoader::addTexture, *itc++, &counter);
+            face(1) = add(tcMap, &MeshLoader::addTexture, *itc++, &counter);
+            face(2) = add(tcMap, &MeshLoader::addTexture, *itc++, &counter);
+
+            if ((region != region2) || (region2 != region3)
+                || (region3 != region))
+            {
+                LOG(warn1)
+                    << "Face (" << face(0) << ", " << face(1)
+                    << ", " << face(2) << ") references texture coordinates "
+                    << "inside different texture subregions ("
+                    << region << ", " << region2 << ", " << region3 << ").";
+            }
+        }
+    }
+
+    math::Points2d tc_;
+    RegionMap regionMap_;
+    std::vector<int> regions_;
+};
+
+void load(MeshLoader &loader, std::istream &in
+          , const Node &node, const Header &header
+          , const GeometrySchema &schema)
 {
     // empty mesh?
     if (!header.vertexCount) { return; }
 
-    if (header.vertexCount % 3) {
-        LOGTHROW(err1, std::runtime_error)
-            << "Invalid number of vertices in PerAttributeArray layout: "
-            "number of vertices (" << header.vertexCount
-            << ") not divisible by 3.";
-    }
-
-    bool verticesLoaded(false);
-
-    Fuser fuser(in, loader, node);
-
-    // face accumulator
-    Faces faces(header.vertexCount / 3);
-    Faces facesTc(header.vertexCount / 3);
-
-    for (const auto &ga : schema.vertexAttributes) {
-        if (ga.key == "position") {
-            if (ga.valuesPerElement != 3) {
-                LOGTHROW(err1, std::runtime_error)
-                    << "Number of vertex elements must be 3 not "
-                    << ga.valuesPerElement << ".";
-            }
-
-            LOG(debug) << "Loading data for vertices.";
-            for (auto &face : faces) {
-                face(0) = fuser.vertex(ga);
-                face(1) = fuser.vertex(ga);
-                face(2) = fuser.vertex(ga);
-            }
-            verticesLoaded = true;
-        } else if (ga.key == "uv0") {
-            if (ga.valuesPerElement != 2) {
-                LOGTHROW(err1, std::runtime_error)
-                    << "Number of UV elements must be 2 not "
-                    << ga.valuesPerElement << ".";
-            }
-
-            LOG(debug) << "Loading data for texture coordinates.";
-            for (auto &face : facesTc) {
-                face(0) = fuser.tc(ga);
-                face(1) = fuser.tc(ga);
-                face(2) = fuser.tc(ga);
-            }
-        } else {
-            // ignore everything else
-            LOG(debug)
-                << "Ignoring data for unsupported vertex attribute <"
-                << ga.key << "> (" << (header.vertexCount * byteCount(ga))
-                << " bytes).";
-            in.ignore(header.vertexCount * byteCount(ga));
-        }
-    }
-
-    if (!verticesLoaded) {
-        LOGTHROW(err1, std::runtime_error)
-            << "No vertex coordinates defined.";
-    }
-
-    // feed loader with faces
-    auto ifacesTc(facesTc.begin());
-    for (const auto &face : faces) {
-        loader.addFace(face, *ifacesTc++);
+    if (has(schema.vertexAttributes, "region")) {
+        // we need to take UV (sub) regions into account
+        RegionFuser(in, loader, node, header)(schema);
+    } else {
+        // good old textured mesh
+        SimpleFuser(in, loader, node, header)(schema);
     }
 }
+
+} // namespace paa
 
 void loadMesh(MeshLoader &loader, const Node &node
               , const Resource &
@@ -800,7 +964,7 @@ void loadMesh(MeshLoader &loader, const Node &node
 
     switch (schema.topology) {
     case Topology::perAttributeArray:
-        loadPerAttributeArray(loader, in, node, header, schema);
+        paa::load(loader, in, node, header, schema);
         break;
 
     case Topology::interleavedArray:
@@ -1007,52 +1171,57 @@ class SimpleMeshLoader
 {
 public:
     SimpleMeshLoader(std::size_t count)
-        : meshes_(count), current_(nullptr)
-    {}
+        : current_(nullptr)
+    {
+        mesh_.submeshes.resize(count);
+    }
 
     virtual MeshLoader& next() {
         if (!current_) {
-            current_ = meshes_.data();
+            current_ = mesh_.submeshes.data();
         } else {
             ++current_;
         }
         return *this;
     }
 
-    geometry::Mesh::list&& moveoutMeshes() {
-        return std::move(meshes_);
+    Mesh&& moveout() {
+        return std::move(mesh_);
     }
 
     virtual void addVertex(const math::Point3d &v) {
-        current_->vertices.push_back(v);
+        current_->mesh.vertices.push_back(v);
     }
 
     virtual void addTexture(const math::Point2d &t) {
-        current_->tCoords.push_back(t);
+        current_->mesh.tCoords.push_back(t);
     }
 
-    virtual void addFace(const Face &mesh, const Face &tc, const Face&)
+    virtual void addFace(const Face &mesh, const FaceTc &tc, const Face&)
     {
-        current_->faces.emplace_back(mesh(0), mesh(1), mesh(2)
-                                     , tc(0), tc(1), tc(2));
+        current_->mesh.faces.emplace_back(mesh(0), mesh(1), mesh(2)
+                                          , tc(0), tc(1), tc(2)
+                                          , tc.region);
     }
 
-    virtual void addNormal(const math::Point3d&) {}
-    virtual void materialLibrary(const std::string&) {}
-    virtual void addTxRegion(const Region&) {};
+    virtual void addTxRegion(const Region &r) {
+        current_->regions.push_back(r);
+    }
 
 private:
-    geometry::Mesh::list meshes_;
-    geometry::Mesh* current_;
+    virtual void addNormal(const math::Point3d&) {}
+
+    Mesh mesh_;
+    SubMesh* current_;
 };
 
 } // namespace
 
-geometry::Mesh::list Archive::loadGeometry(const Node &node) const
+Mesh Archive::loadGeometry(const Node &node) const
 {
     SimpleMeshLoader loader(node.geometryData.size());
     loadGeometry(loader, node);
-    return loader.moveoutMeshes();
+    return loader.moveout();
 }
 
 roarchive::IStream::pointer Archive::texture(const Node &node, int index) const

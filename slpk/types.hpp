@@ -30,6 +30,7 @@
 #include <map>
 #include <memory>
 #include <functional>
+#include <algorithm>
 
 // Please, don't ask...
 #ifdef __GNUC__
@@ -242,6 +243,8 @@ struct GeometryAttribute {
 
     typedef std::vector<GeometryAttribute> list;
 };
+
+bool has(const GeometryAttribute::list &gal, const std::string &name);
 
 struct GeometrySchema {
     GeometryType geometryType;
@@ -472,6 +475,18 @@ struct Tree {
         return &fnodes->second;
     }
 };
+
+// inlines
+
+inline bool has(const GeometryAttribute::list &gal, const std::string &name)
+{
+    return (std::find_if(gal.begin(), gal.end()
+                         , [&](const GeometryAttribute &ga)
+                         {
+                             return (ga.key == name);
+                         })
+            != gal.end());
+}
 
 } // namespace slpk
 

@@ -24,6 +24,7 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
+#include <boost/optional.hpp>
 #include <boost/utility/in_place_factory.hpp>
 
 #include <opencv2/highgui/highgui.hpp>
@@ -39,6 +40,7 @@
 #include "geometry/meshop.hpp"
 
 #include "imgproc/readimage.cpp"
+#include "imgproc/texturing.cpp"
 
 #include "geo/csconvertor.hpp"
 
@@ -129,6 +131,34 @@ void writeMtl(const fs::path &path, const std::string &name)
       << "\n";
 }
 
+class DeepCopyCsCovertor {
+public:
+    DeepCopyCsCovertor(geo::SrsDefinition src, geo::SrsDefinition dst)
+        : src_(src), dst_(dst), conv_(src_, dst_)
+    {}
+
+    DeepCopyCsCovertor(const DeepCopyCsCovertor &c)
+        : src_(c.src_), dst_(c.dst_), conv_(src_, dst_)
+    {}
+
+    DeepCopyCsCovertor& operator=(const DeepCopyCsCovertor &c) {
+        src_ = c.src_;
+        dst_ = c.dst_;
+        conv_ = geo::CsConvertor(src_, dst_);
+        return *this;
+    }
+
+    operator const geo::CsConvertor&() const { return conv_; }
+
+    template <typename T> T operator()(const T &p) const { return conv_(p); }
+
+private:
+    geo::SrsDefinition src_;
+    geo::SrsDefinition dst_;
+
+    geo::CsConvertor conv_;
+};
+
 /** Loads SLPK geometry as a list of submeshes.
  */
 class MeasureMesh
@@ -148,7 +178,7 @@ public:
 
 private:
     virtual void addTexture(const math::Point2d&) {}
-    virtual void addFace(const Face&, const Face&, const Face&) {}
+    virtual void addFace(const Face&, const FaceTc&, const Face&) {}
     virtual void addNormal(const math::Point3d&) {}
     virtual void addTxRegion(const Region&) {}
 
@@ -158,7 +188,7 @@ private:
 
 math::Extents2 measureMesh(const slpk::Tree &tree
                            , const slpk::Archive &input
-                           , geo::CsConvertor conv)
+                           , DeepCopyCsCovertor conv)
 {
     // find topLevel
     auto topLevel(std::numeric_limits<int>::max());
@@ -184,7 +214,7 @@ math::Extents2 measureMesh(const slpk::Tree &tree
     math::Extents2 extents(math::InvalidExtents{});
     auto *pextents(&extents);
 
-    UTILITY_OMP(parallel for)
+    UTILITY_OMP(parallel for firstprivate(conv))
     for (std::size_t i = 0; i < nodes.size(); ++i) {
         const auto &node(*(*pnodes)[i]);
 
@@ -203,10 +233,163 @@ math::Extents2 measureMesh(const slpk::Tree &tree
     return extents;
 }
 
+cv::Mat stream2mat(const roarchive::IStream::pointer &txStream)
+{
+    const auto buf(txStream->read());
+    const auto image(cv::imdecode(buf, CV_LOAD_IMAGE_COLOR));
+
+    if (!image.data) {
+        LOGTHROW(err1, std::runtime_error)
+            << "Cannot decode image from " << txStream->path() << ".";
+    }
+    return image;
+}
+
+inline double remap(int size, int coord) {
+    return size * (coord / 65535.0);
+}
+
+inline math::Extents2 remap(const math::Size2 &size
+                            , const slpk::Region &region)
+{
+    return {
+        remap(size.width, region.ll(0))
+        , remap(size.height, region.ll(1))
+        , remap(size.width, region.ur(0))
+        , remap(size.height, region.ur(1))
+    };
+}
+
+inline math::Point2d& remap(const math::Size2f &rsize, math::Point2d &tc)
+{
+    tc(0) *= rsize.width;
+    tc(1) *= rsize.height;
+    return tc;
+}
+
+void rebuild(slpk::SubMesh &submesh
+             , const roarchive::IStream::pointer &txStream
+             , const fs::path &texPath)
+{
+    const auto tx(stream2mat(txStream));
+
+    const math::Size2 txSize(tx.cols, tx.rows);
+
+    auto &mesh(submesh.mesh);
+
+    std::vector<math::Extents2> regions;
+    imgproc::tx::Patch::Rect::list uvRects;
+    for (auto &region : submesh.regions) {
+        regions.push_back(remap(txSize, region));
+        uvRects.emplace_back(imgproc::tx::UvPatch(regions.back()));
+    }
+
+    // UV patch per region
+    imgproc::tx::UvPatch::list uvPatches(submesh.regions.size());
+
+    // create expanded patches
+    std::vector<std::uint8_t> seen(mesh.tCoords.size(), false);
+    const auto expand([&](imgproc::tx::UvPatch &uvPatch
+                          , const math::Size2f &rsize, int index)
+    {
+        // skip mapped tc
+        auto &iseen(seen[index]);
+        if (iseen) { return; }
+
+        uvPatch.update(remap(rsize, mesh.tCoords[index]));
+
+        iseen = true;
+    });
+
+    for (const auto &face : mesh.faces) {
+        const auto &region(regions[face.imageId]);
+        const auto &rsize(math::size(region));
+        auto &uvPatch(uvPatches[face.imageId]);
+
+        expand(uvPatch, rsize, face.ta);
+        expand(uvPatch, rsize, face.tb);
+        expand(uvPatch, rsize, face.tc);
+    }
+
+    std::vector<imgproc::tx::Patch>
+        patches(uvPatches.begin(), uvPatches.end());
+
+    const auto size(imgproc::tx::pack(patches.begin(), patches.end()));
+
+    // map texture coordinates to new texture
+
+    seen.assign(mesh.tCoords.size(), false);
+    const auto map([&](const imgproc::tx::Patch &patch, int index)
+    {
+        // skip mapped tc
+        auto &iseen(seen[index]);
+        if (iseen) { return; }
+
+        auto &tc(mesh.tCoords[index]);
+        // map
+        patch.map({}, tc);
+        // and normalize
+        tc(0) /= size.width;
+        tc(1) /= size.height;
+
+        iseen = true;
+    });
+
+    for (auto &face : mesh.faces) {
+        auto &patch(patches[face.imageId]);
+        map(patch, face.ta);
+        map(patch, face.tb);
+        map(patch, face.tc);
+
+        // reset image ID
+        face.imageId = 0;
+    }
+
+    // generate new texture
+    cv::Mat_<cv::Vec3b> otx(size.height, size.width, cv::Vec3b());
+
+    // TODO: implement me
+    auto iuvRects(uvRects.begin());
+    for (const auto &patch : patches) {
+        const auto &uvRect(*iuvRects++);
+        const auto &dstRect(patch.dst());
+        const math::Point2i diff(dstRect.point - uvRect.point);
+
+        // copy data
+        for (int j(dstRect.point(1)), je(j + dstRect.size.height);
+             j != je; ++j)
+        {
+            if ((j < 0) || (j >= size.height)) { continue; }
+
+            const auto jsrc(uvRect.point(1)
+                            + (j - diff(1)) % uvRect.size.height);
+
+            if ((jsrc < 0) || (jsrc >= txSize.height)) { continue; }
+
+            for (int i(dstRect.point(0)), ie(i + dstRect.size.width);
+                 i != ie; ++i)
+            {
+                if ((i < 0) || (i >= size.width)) { continue; }
+
+                const auto isrc(uvRect.point(0)
+                                + (i - diff(0)) % uvRect.size.width);
+
+                if ((isrc < 0) || (isrc >= txSize.width)) { continue; }
+
+                otx(j, i) = tx.at<cv::Vec3b>(jsrc, isrc);
+            }
+        }
+    }
+
+    cv::imwrite(texPath.string(), otx
+                , { cv::IMWRITE_JPEG_QUALITY, 85
+                    , cv::IMWRITE_PNG_COMPRESSION, 9 });
+}
+
 void write(const slpk::Archive &input, fs::path &output
            , const geo::SrsDefinition &srs)
 {
-    geo::CsConvertor conv
+    DeepCopyCsCovertor conv
         (input.sceneLayerInfo().spatialReference.srs(), srs);
 
     const auto tree(input.loadTree());
@@ -214,8 +397,6 @@ void write(const slpk::Archive &input, fs::path &output
     // find extents in destination SRS to localize mesh
     const auto extents(measureMesh(tree, input, conv));
     const auto center(math::center(extents));
-    LOG(info4) << std::fixed << "extents: " << extents
-               << ", center: " << center;
 
     // collect nodes for OpenMP
     std::vector<const slpk::Node*> nodes;
@@ -226,18 +407,19 @@ void write(const slpk::Archive &input, fs::path &output
     const auto *pnodes(&nodes);
     const auto *pcenter(&center);
 
-    UTILITY_OMP(parallel for)
+    UTILITY_OMP(parallel for firstprivate(conv))
     for (std::size_t i = 0; i < nodes.size(); ++i) {
         const auto &node(*(*pnodes)[i]);
         const auto &center(*pcenter);
 
-        LOG(info4) << "Exporting <" << node.id << ">.";
+        LOG(info3) << "Converting <" << node.id << ">.";
 
         auto geometry(input.loadGeometry(node));
 
         auto igd(node.geometryData.begin());
         int meshIndex(0);
-        for (auto &mesh : geometry) {
+        for (auto &submesh : geometry.submeshes) {
+            auto &mesh(submesh.mesh);
             for (auto &v : mesh.vertices) {
                 v = conv(v) - center;
             }
@@ -249,21 +431,30 @@ void write(const slpk::Archive &input, fs::path &output
             auto texture(input.texture(node, meshIndex));
 
             // detect extension
-            const auto texPath(utility::addExtension
-                               (path, imgproc::imageType
-                                (*texture, texture->path())));
             const auto mtlPath(utility::addExtension(path, ".mtl"));
 
-            // save mesh
+            fs::path texPath;
+
+            if (submesh.regions.empty()) {
+                // copy texture as-is
+                texPath  = utility::addExtension
+                    (path, imgproc::imageType
+                     (*texture, texture->path()));
+                copy(texture, texPath);
+            } else {
+                // texture atlas, need to repack/unpack texture
+                texPath = utility::addExtension(path, ".jpg");
+                rebuild(submesh, texture, texPath);
+            }
+
             {
+                // save mesh
                 utility::ofstreambuf os(meshPath.string());
                 os.precision(12);
                 saveAsObj(mesh, os, mtlPath.filename().string());
                 os.flush();
             }
 
-            // copy texture as-is
-            copy(input.texture(node, meshIndex), texPath);
             writeMtl(mtlPath, texPath.filename().string());
             ++meshIndex;
         }

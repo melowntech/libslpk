@@ -27,9 +27,9 @@
 #define slpk_reader_hpp_included_
 
 #include <initializer_list>
+#include <vector>
 
 #include "geometry/mesh.hpp"
-#include "geometry/parse-obj.hpp"
 
 #include "geo/srsdef.hpp"
 
@@ -39,20 +39,39 @@
 
 namespace slpk {
 
-typedef math::Point3_<int> Face;
+typedef math::Point3_<unsigned int> Face;
 typedef std::vector<Face> Faces;
 typedef math::Extents2i Region;
+typedef std::vector<Region> Regions;
+
+/** Face in texture coordinates. Enhanced with texture coordinates.
+ */
+struct FaceTc : Face {
+    unsigned int region;
+
+    FaceTc() : Face(), region() {}
+    FaceTc(Face &&f) : Face(std::move(f)), region() {}
+    FaceTc(Face &&f, unsigned int region)
+        : Face(std::move(f)), region(region) {}
+
+    FaceTc(unsigned int t1, unsigned int t2, unsigned int t3
+           , unsigned int region)
+        : Face(t1, t2, t3), region(region) {}
+};
+
+typedef std::vector<FaceTc> FacesTc;
 
 class MeshLoader {
 public:
     typedef slpk::Face Face;
+    typedef slpk::FaceTc FaceTc;
     typedef slpk::Region Region;
 
     virtual ~MeshLoader() {}
     virtual void addVertex(const math::Point3d&) = 0;
     virtual void addTexture(const math::Point2d&) = 0;
     virtual void addNormal(const math::Point3d&) = 0;
-    virtual void addFace(const Face &mesh, const Face &tc = Face()
+    virtual void addFace(const Face &mesh, const FaceTc &tc = FaceTc()
                          , const Face &normal = Face()) = 0;
     virtual void addTxRegion(const Region &region) = 0;
 };
@@ -66,6 +85,21 @@ public:
     /** Get reference to next mesh loader.
      */
     virtual MeshLoader& next() = 0;
+};
+
+/** Sub mesh for provided simple geometry loader.
+ */
+struct SubMesh {
+    geometry::Mesh mesh;
+    Regions regions;
+
+    typedef std::vector<SubMesh> list;
+};
+
+/** Mesh for provided simple geometry loader.
+ */
+struct Mesh {
+    SubMesh::list submeshes;
 };
 
 /** SLPK archive reader
@@ -106,7 +140,7 @@ public:
 
     /** Loads node geometry. Possibly more meshes than just one.
      */
-    geometry::Mesh::list loadGeometry(const Node &node) const;
+    Mesh loadGeometry(const Node &node) const;
 
     /** Generic mesh load interface.
      */
