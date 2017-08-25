@@ -41,7 +41,7 @@ namespace slpk {
 
 typedef math::Point3_<unsigned int> Face;
 typedef std::vector<Face> Faces;
-typedef math::Extents2i Region;
+typedef math::Extents2 Region;
 typedef std::vector<Region> Regions;
 
 /** Face in texture coordinates. Enhanced with texture coordinates.
@@ -66,6 +66,7 @@ public:
     typedef slpk::Face Face;
     typedef slpk::FaceTc FaceTc;
     typedef slpk::Region Region;
+    typedef slpk::Regions Regions;
 
     virtual ~MeshLoader() {}
     virtual void addVertex(const math::Point3d&) = 0;

@@ -601,6 +601,14 @@ void read(std::istream &in, DataType type, T &out)
     throw;
 }
 
+template <typename T>
+T read(std::istream &in, DataType type)
+{
+    T out;
+    read(in, type, out);
+    return out;
+}
+
 std::size_t byteCount(const DataType &type)
 {
 #define MEASURE_DATATYPE(ENUM, TYPE)            \
@@ -834,6 +842,10 @@ private:
     TextureMap tc_;
 };
 
+double normalizeRegion(double value) {
+    return value / 65535.0;
+}
+
 class RegionFuser : public Fuser {
 public:
     RegionFuser(std::istream &in, MeshLoader &loader, const Node &node
@@ -873,11 +885,12 @@ private:
 
     void loadTxRegions(const GeometryAttribute &ga) {
         for (auto &regionIndex : regions_) {
+
             Region region;
-            read(in_, ga.valueType, region.ll(0));
-            read(in_, ga.valueType, region.ll(1));
-            read(in_, ga.valueType, region.ur(0));
-            read(in_, ga.valueType, region.ur(1));
+            region.ll(0) = normalizeRegion(read<double>(in_, ga.valueType));
+            region.ll(1) = normalizeRegion(read<double>(in_, ga.valueType));
+            region.ur(0) = normalizeRegion(read<double>(in_, ga.valueType));
+            region.ur(1) = normalizeRegion(read<double>(in_, ga.valueType));
 
             regionIndex = add(regionMap_, &MeshLoader::addTxRegion, region);
         }

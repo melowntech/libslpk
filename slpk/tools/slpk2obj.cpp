@@ -245,25 +245,19 @@ cv::Mat stream2mat(const roarchive::IStream::pointer &txStream)
     return image;
 }
 
-inline double remap(long size, long coord) {
-    return ((size * coord) / 65535.0);
-}
-
 inline math::Extents2 remap(const math::Size2 &size
                             , const slpk::Region &region)
 {
     return {
-        remap(size.width, region.ll(0))
-        , remap(size.height, region.ll(1))
-        , remap(size.width, region.ur(0))
-        , remap(size.height, region.ur(1))
+        size.width * region.ll(0), size.height * region.ll(1)
+        , size.width * region.ur(0), size.height *  region.ur(1)
     };
 }
 
-inline math::Point2d& remap(const math::Size2f &rsize, math::Point2d &tc)
+inline math::Point2d& denormalize(const math::Size2f &rsize, math::Point2d &tc)
 {
     tc(0) *= rsize.width;
-    tc(1) *= rsize.height;
+    tc(1) = (1.0 - tc(1)) * rsize.height;
     return tc;
 }
 
@@ -296,7 +290,7 @@ void rebuild(slpk::SubMesh &submesh
         auto &iseen(seen[index]);
         if (iseen) { return; }
 
-        uvPatch.update(remap(rsize, mesh.tCoords[index]));
+        uvPatch.update(denormalize(rsize, mesh.tCoords[index]));
 
         iseen = true;
     });
@@ -328,11 +322,10 @@ void rebuild(slpk::SubMesh &submesh
         auto &tc(mesh.tCoords[index]);
         // map
         patch.map({}, tc);
-        // and normalize
+
+        // and normalize back again
         tc(0) /= size.width;
         tc(1) /= size.height;
-
-        // is it really needed?
         tc(1) = 1.0 - tc(1);
 
         iseen = true;
