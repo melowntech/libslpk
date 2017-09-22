@@ -52,21 +52,21 @@ namespace slpk {
 
 const std::string MainFile("metadata.json");
 
-UTILITY_GENERATE_ENUM(FolderPattern,
-                      ((basic)("BASIC"))
-                      ((extended)("EXTENDED"))
-                      )
+UTILITY_GENERATE_ENUM_CI(FolderPattern,
+                         ((basic)("BASIC"))
+                         ((extended)("EXTENDED"))
+                         )
 
-UTILITY_GENERATE_ENUM(ArchiveCompressionType,
-                      ((store)("STORE"))
-                      ((deflate64)("DEFLATE64"))
-                      ((deflate)("DEFLATE"))
-                      )
+UTILITY_GENERATE_ENUM_CI(ArchiveCompressionType,
+                         ((store)("STORE"))
+                         ((deflate64)("DEFLATE64"))
+                         ((deflate)("DEFLATE"))
+                         )
 
-UTILITY_GENERATE_ENUM(ResourceCompressionType,
-                      ((none)("NONE"))
-                      ((gzip)("GZIP"))
-                      )
+UTILITY_GENERATE_ENUM_CI(ResourceCompressionType,
+                         ((none)("NONE"))
+                         ((gzip)("GZIP"))
+                         )
 
 struct Version {
     int major;
@@ -91,14 +91,15 @@ struct Metadata {
     {}
 };
 
-UTILITY_GENERATE_ENUM(LayerType,
-                      ((point)("Point"))
-                      ((line)("Line"))
-                      ((polygon)("Polygon"))
-                      ((object)("3DObject"))
-                      ((integratedMesh)("IntegratedMesh"))
-                      ((pointcloud)("Pointcloud"))
-                      )
+UTILITY_GENERATE_ENUM_CI(LayerType,
+                         ((point)("Point"))
+                         ((line)("Line"))
+                         ((polygon)("Polygon"))
+                         ((object)("3DObject"))
+                         ((integratedMesh)("IntegratedMesh"))
+                         ((pointcloud)("Pointcloud"))
+                         )
+
 
 struct SpatialReference {
     int wkid; // defaults to WGS84
@@ -114,10 +115,10 @@ struct SpatialReference {
     geo::SrsDefinition srs() const;
 };
 
-UTILITY_GENERATE_ENUM(HeightModel,
-                      ((orthometric))
-                      ((ellipsoidal))
-                      )
+UTILITY_GENERATE_ENUM_CI(HeightModel,
+                         ((orthometric))
+                         ((ellipsoidal))
+                         )
 
 struct HeightModelInfo {
     HeightModel heightModel;
@@ -127,43 +128,43 @@ struct HeightModelInfo {
     HeightModelInfo() : heightModel(HeightModel::orthometric) {}
 };
 
-UTILITY_GENERATE_ENUM(Profile,
-                      ((meshes))
-                      ((polygons))
-                      ((points))
-                      ((lines))
-                      ((analytics))
-                      ((meshpyramids))
-                      ((pointclouds))
-                      ((symbols))
-                      )
+UTILITY_GENERATE_ENUM_CI(Profile,
+                         ((meshes))
+                         ((polygons))
+                         ((points))
+                         ((lines))
+                         ((analytics))
+                         ((meshpyramids))
+                         ((pointclouds)("pointclouds")("pointcloud"))
+                         ((symbols))
+                         )
 
-UTILITY_GENERATE_ENUM(ResourcePattern,
-                      ((nodeIndexDocument)("3dNodeIndexDocument"))
-                      ((sharedResource)("SharedResource"))
-                      ((featureData)("FeatureData"))
-                      ((geometry)("Geometry"))
-                      ((texture)("Texture"))
-                      ((attributes)("Attributes"))
-                      )
+UTILITY_GENERATE_ENUM_CI(ResourcePattern,
+                         ((nodeIndexDocument)("3dNodeIndexDocument"))
+                         ((sharedResource)("SharedResource"))
+                         ((featureData)("FeatureData"))
+                         ((geometry)("Geometry"))
+                         ((texture)("Texture"))
+                         ((attributes)("Attributes"))
+                         )
 
-UTILITY_GENERATE_ENUM(NormalReferenceFrame,
-                      ((eastNorthUp)("east-north-up"))
-                      ((earthCentered)("earth-centered"))
-                      ((vertexReferenceFrame)("vertex-reference-frame"))
-                      )
+UTILITY_GENERATE_ENUM_CI(NormalReferenceFrame,
+                         ((eastNorthUp)("east-north-up"))
+                         ((earthCentered)("earth-centered"))
+                         ((vertexReferenceFrame)("vertex-reference-frame"))
+                         )
 
-UTILITY_GENERATE_ENUM(LodType,
-                      ((meshPyramid)("MeshPyramid"))
-                      ((thinning)("Thinning"))
-                      ((clustering)("Clustering"))
-                      ((generalizing)("Generalizing"))
-                      )
+UTILITY_GENERATE_ENUM_CI(LodType,
+                         ((meshPyramid)("MeshPyramid"))
+                         ((thinning)("Thinning"))
+                         ((clustering)("Clustering"))
+                         ((generalizing)("Generalizing"))
+                         )
 
-UTILITY_GENERATE_ENUM(LodModel,
-                      ((nodeSwitching)("node-switching"))
-                      ((none))
-                      )
+UTILITY_GENERATE_ENUM_CI(LodModel,
+                         ((nodeSwitching)("node-switching"))
+                         ((none))
+                         )
 
 struct Cardinality {
     int min;
@@ -172,11 +173,11 @@ struct Cardinality {
     Cardinality(int min = 0, int max = 0) : min(min), max(max) {}
 };
 
-UTILITY_GENERATE_ENUM(IndexSchemeName,
-                      ((esriRTree)("esriRTree"))
-                      ((quadTree)("QuadTree"))
-                      ((agolTilingScheme)("AGOLTilingScheme"))
-                      )
+UTILITY_GENERATE_ENUM_CI(IndexSchemeName,
+                         ((esriRTree)("esriRTree"))
+                         ((quadTree)("QuadTree"))
+                         ((agolTilingScheme)("AGOLTilingScheme"))
+                         )
 
 struct IndexScheme {
     IndexSchemeName name;
@@ -190,30 +191,30 @@ struct IndexScheme {
     {}
 };
 
-UTILITY_GENERATE_ENUM(GeometryType,
-                      ((triangles))
-                      ((lines))
-                      ((points))
-                      )
+UTILITY_GENERATE_ENUM_CI(GeometryType,
+                         ((triangles))
+                         ((lines))
+                         ((points))
+                         )
 
-UTILITY_GENERATE_ENUM(Topology,
-                      ((perAttributeArray)("PerAttributeArray"))
-                      ((interleavedArray)("InterleavedArray"))
-                      ((indexed)("Indexed"))
-                      )
+UTILITY_GENERATE_ENUM_CI(Topology,
+                         ((perAttributeArray)("PerAttributeArray"))
+                         ((interleavedArray)("InterleavedArray"))
+                         ((indexed)("Indexed"))
+                         )
 
-UTILITY_GENERATE_ENUM(DataType,
-                      ((uint8)("UInt8"))
-                      ((uint16)("UInt16"))
-                      ((uint32)("UInt32"))
-                      ((uint64)("UInt64"))
-                      ((int8)("Int8"))
-                      ((int16)("Int16"))
-                      ((int32)("Int32"))
-                      ((int64)("Int64"))
-                      ((float32)("Float32"))
-                      ((float64)("Float64"))
-                      )
+UTILITY_GENERATE_ENUM_CI(DataType,
+                         ((uint8)("UInt8"))
+                         ((uint16)("UInt16"))
+                         ((uint32)("UInt32"))
+                         ((uint64)("UInt64"))
+                         ((int8)("Int8"))
+                         ((int16)("Int16"))
+                         ((int32)("Int32"))
+                         ((int64)("Int64"))
+                         ((float32)("Float32"))
+                         ((float64)("Float64"))
+                         )
 
 struct HeaderAttribute {
     std::string property;
@@ -404,11 +405,11 @@ struct Resource {
     typedef std::vector<Resource> list;
 };
 
-UTILITY_GENERATE_ENUM(MetricType,
-                      ((maxScreenThreshold))
-                      ((screenSpaceRelative))
-                      ((distanceRangeFromDefaultCamera))
-                      )
+UTILITY_GENERATE_ENUM_CI(MetricType,
+                         ((maxScreenThreshold))
+                         ((screenSpaceRelative))
+                         ((distanceRangeFromDefaultCamera))
+                         )
 
 struct LodSelection {
     MetricType metricType;
