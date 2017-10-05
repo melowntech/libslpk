@@ -24,6 +24,8 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
+#include <set>
+
 #include <boost/optional.hpp>
 #include <boost/utility/in_place_factory.hpp>
 
@@ -53,6 +55,17 @@ namespace ublas = boost::numeric::ublas;
 
 namespace {
 
+typedef std::vector<std::string> NodeIdList;
+typedef std::set<std::string> NodeIdSet;
+
+bool notPicked(const std::string &nodeId
+               , const boost::optional<NodeIdSet> &picked)
+{
+    if (!picked) { return false; }
+    return (picked->find(nodeId) == picked->end());
+}
+
+
 class Slpk2Obj : public service::Cmdline
 {
 public:
@@ -79,6 +92,8 @@ private:
     fs::path input_;
     bool overwrite_;
     geo::SrsDefinition srs_;
+
+    boost::optional<NodeIdSet> nodes_;
 };
 
 void Slpk2Obj::configuration(po::options_description &cmdline
@@ -93,11 +108,14 @@ void Slpk2Obj::configuration(po::options_description &cmdline
         ("overwrite", "Generate output even if output directory exists.")
         ("srs", po::value(&srs_)->default_value(srs_)->required()
          , "Destination SRS of converted meshes.")
+        ("nodes", po::value<NodeIdList>()
+         , "Limit output to listed nodes.")
         ;
 
     pd
         .add("input", 1)
-        .add("output", 1);
+        .add("output", 1)
+        .add("nodes", -1);
 
     (void) config;
 }
@@ -105,6 +123,11 @@ void Slpk2Obj::configuration(po::options_description &cmdline
 void Slpk2Obj::configure(const po::variables_map &vars)
 {
     overwrite_ = vars.count("overwrite");
+
+    if (vars.count("nodes")) {
+        const auto &raw(vars["nodes"].as<NodeIdList>());
+        nodes_ = boost::in_place(raw.begin(), raw.end());
+    }
 }
 
 bool Slpk2Obj::help(std::ostream &out, const std::string &what) const
@@ -188,12 +211,13 @@ private:
 
 math::Extents2 measureMesh(const slpk::Tree &tree
                            , const slpk::Archive &input
-                           , DeepCopyCsCovertor conv)
+                           , DeepCopyCsCovertor conv
+                           , const boost::optional<NodeIdSet> &pickedNodes)
 {
     // find topLevel
     auto topLevel(std::numeric_limits<int>::max());
-
     for (const auto item : tree.nodes) {
+        if (notPicked(item.first, pickedNodes)) { continue; }
         const auto &node(item.second);
         if (node.hasGeometry()) {
             topLevel = std::min(topLevel, node.level);
@@ -203,6 +227,7 @@ math::Extents2 measureMesh(const slpk::Tree &tree
     // collect nodes for OpenMP
     std::vector<const slpk::Node*> nodes;
     for (const auto &item : tree.nodes) {
+        if (notPicked(item.first, pickedNodes)) { continue; }
         const auto &node(item.second);
         if ((node.level == topLevel) && (node.hasGeometry())) {
             nodes.push_back(&node);
@@ -383,7 +408,8 @@ void rebuild(slpk::SubMesh &submesh
 }
 
 void write(const slpk::Archive &input, fs::path &output
-           , const geo::SrsDefinition &srs)
+           , const geo::SrsDefinition &srs
+           , const boost::optional<NodeIdSet> &pickedNodes)
 {
     DeepCopyCsCovertor conv
         (input.sceneLayerInfo().spatialReference.srs(), srs);
@@ -391,12 +417,13 @@ void write(const slpk::Archive &input, fs::path &output
     const auto tree(input.loadTree());
 
     // find extents in destination SRS to localize mesh
-    const auto extents(measureMesh(tree, input, conv));
+    const auto extents(measureMesh(tree, input, conv, pickedNodes));
     const auto center(math::center(extents));
 
     // collect nodes for OpenMP
     std::vector<const slpk::Node*> nodes;
     for (const auto &item : tree.nodes) {
+        if (notPicked(item.first, pickedNodes)) { continue; }
         nodes.push_back(&item.second);
     }
 
@@ -464,7 +491,7 @@ int Slpk2Obj::run()
     LOG(info4) << "Opening SLPK archive at " << input_ << ".";
     slpk::Archive archive(input_);
     LOG(info4) << "Generating textured meshes at " << output_ << ".";
-    write(archive, output_, srs_);
+    write(archive, output_, srs_, nodes_);
     return EXIT_SUCCESS;
 }
 
