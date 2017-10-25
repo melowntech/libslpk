@@ -29,6 +29,8 @@
 #include <initializer_list>
 #include <vector>
 
+#include <boost/any.hpp>
+
 #include "geometry/mesh.hpp"
 
 #include "geo/srsdef.hpp"
@@ -127,6 +129,12 @@ public:
     istream(const boost::filesystem::path &path
             , const std::initializer_list<const char*> &extensions) const;
 
+    /** Generic I/O. Does not ungzip gzipped files. Usable only for HTTP
+     *  adapters.
+     */
+    roarchive::IStream::pointer
+    rawistream(const boost::filesystem::path &path) const;
+
     /** Returns loaded scene layer info.
      */
     const SceneLayerInfo& sceneLayerInfo() const { return sli_; }
@@ -163,9 +171,15 @@ public:
      */
     math::Size2 textureSize(const Node &node, int index = 0) const;
 
+    /** Generates information needed for serving scene layer contained in this
+     *  SLPK over HTTP.
+     */
+    std::pair<SceneLayerInfo, std::string> sceneServerConfig() const;
+
 private:
     roarchive::RoArchive archive_;
     Metadata metadata_;
+    boost::any rawSli_;
     SceneLayerInfo sli_;
 };
 

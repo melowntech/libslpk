@@ -344,6 +344,7 @@ private:
 
 struct SceneLayerInfo {
     int id;
+    std::string href;
     LayerType layerType;
     SpatialReference spatialReference;
     HeightModelInfo heightModelInfo;

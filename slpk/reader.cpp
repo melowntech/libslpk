@@ -390,16 +390,25 @@ void parse(Store &s, const Json::Value &value)
     // TODO: defaultMaterialDefinition
 }
 
-SceneLayerInfo loadSceneLayerInfo(std::istream &in, const fs::path &path)
+std::pair<SceneLayerInfo, boost::any>
+loadSceneLayerInfo(std::istream &in, const fs::path &path)
 {
     LOG(info1) << "Loading SLPK 3d scene layer info from " << path  << ".";
 
+
     const auto value(Json::read(in, path, "SLPK 3d scene layer info"));
 
-    SceneLayerInfo sli;
+    std::pair<SceneLayerInfo, boost::any> out;
+    out.second = value;
+    auto &sli(out.first);
 
     Json::get(sli.id, value, "id");
     Json::get(sli.layerType, value, "layerType");
+
+    if (!Json::getOpt(sli.href, value, "href")) {
+        // use default
+        sli.href = "./layers/0";
+    }
 
     // spatial reference:
     if (value.isMember("spatialReference")) {
@@ -418,10 +427,11 @@ SceneLayerInfo loadSceneLayerInfo(std::istream &in, const fs::path &path)
     parse(*sli.store
           , Json::check(value["store"], Json::objectValue, "store"));
 
-    return sli;
+    return out;
 }
 
-SceneLayerInfo loadSceneLayerInfo(const roarchive::IStream::pointer &in)
+std::pair<SceneLayerInfo, boost::any>
+loadSceneLayerInfo(const roarchive::IStream::pointer &in)
 {
     return loadSceneLayerInfo(in->get(), in->path());
 }
@@ -1034,18 +1044,22 @@ void SceneLayerInfo::finish(const std::string &cwd)
 }
 
 Archive::Archive(const fs::path &root, const std::string &mime)
-    : archive_(root, constants::MetadataName, mime)
+    : archive_
+      (root, roarchive::OpenOptions().setHint(constants::MetadataName)
+       .setMime(mime))
     , metadata_(loadMetadata(archive_.istream(constants::MetadataName)))
-    , sli_(loadSceneLayerInfo(istream(constants::SceneLayer)))
 {
+    std::tie(sli_, rawSli_)
+        = loadSceneLayerInfo(istream(constants::SceneLayer));
     sli_.finish();
 }
 
 Archive::Archive(roarchive::RoArchive &archive)
     : archive_(archive.applyHint(constants::MetadataName))
     , metadata_(loadMetadata(archive_.istream(constants::MetadataName)))
-    , sli_(loadSceneLayerInfo(istream(constants::SceneLayer)))
 {
+    std::tie(sli_, rawSli_)
+        = loadSceneLayerInfo(istream(constants::SceneLayer));
     sli_.finish();
 }
 
@@ -1116,6 +1130,26 @@ Archive::istream(const fs::path &path
 
     LOGTHROW(err1, std::logic_error)
         << "Error obtaining stream.";
+    throw;
+}
+
+roarchive::IStream::pointer Archive::rawistream(const fs::path &path) const
+{
+    switch (metadata_.resourceCompressionType) {
+    case ResourceCompressionType::none:
+        return archive_.istream(path);
+
+    case ResourceCompressionType::gzip: {
+        const auto gzPath(utility::addExtension(path, constants::gzExt));
+        if (archive_.exists(gzPath)) {
+            return archive_.istream(gzPath);
+        }
+        return archive_.istream(path);
+    } break;
+    }
+
+    LOGTHROW(err1, std::runtime_error)
+        << "Invalid ResourceCompressionType in metadata.";
     throw;
 }
 
@@ -1289,6 +1323,28 @@ math::Size2 Archive::textureSize(const Node &node, int index) const
 geo::SrsDefinition Archive::srs() const
 {
     return sli_.spatialReference.srs();
+}
+
+std::pair<SceneLayerInfo, std::string> Archive::sceneServerConfig() const
+{
+    std::pair<SceneLayerInfo, std::string> out;
+    out.first = sli_;
+
+    Json::Value config(Json::objectValue);
+    config["serviceName"] = "SceneService";
+    config["serviceVersion"] = "1.4";
+    (config["supportedBindings"] = Json::arrayValue).append("REST");
+    (config["supportedOperations"] = Json::arrayValue).append("BASE");
+
+    auto &layers(config["layers"] = Json::arrayValue);
+    layers.append(boost::any_cast<const Json::Value&>(rawSli_));
+
+    std::ostringstream os;
+    os.precision(15);
+    Json::write(os, config);
+    out.second = os.str();
+
+    return out;
 }
 
 } // namespace slpk
