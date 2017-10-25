@@ -1033,8 +1033,8 @@ void SceneLayerInfo::finish(const std::string &cwd)
     store->finish(cwd);
 }
 
-Archive::Archive(const fs::path &root)
-    : archive_(root, constants::MetadataName)
+Archive::Archive(const fs::path &root, const std::string &mime)
+    : archive_(root, constants::MetadataName, mime)
     , metadata_(loadMetadata(archive_.istream(constants::MetadataName)))
     , sli_(loadSceneLayerInfo(istream(constants::SceneLayer)))
 {

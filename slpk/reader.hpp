@@ -107,7 +107,13 @@ struct Mesh {
  */
 class Archive {
 public:
-    Archive(const boost::filesystem::path &root);
+    /** Open SLPK archive at given path with optional archive MIME type (from
+     *  magic library).
+     *
+     * \param root path to archive/archive's root directory
+     * \param mime root's MIME type or empty if unknown
+     */
+    Archive(const boost::filesystem::path &root, const std::string &mime = "");
     Archive(roarchive::RoArchive &archive);
 
     /** Generic I/O.
