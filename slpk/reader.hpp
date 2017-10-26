@@ -28,6 +28,7 @@
 
 #include <initializer_list>
 #include <vector>
+#include <map>
 
 #include <boost/any.hpp>
 
@@ -105,6 +106,28 @@ struct Mesh {
     SubMesh::list submeshes;
 };
 
+struct ApiFile {
+    /** Stored file's path
+     */
+    boost::filesystem::path path;
+
+    /** File's content type.
+     */
+    std::string contentType;
+
+    /** Is file gzipped?
+     */
+    bool gzipped;
+
+    typedef std::map<std::string, ApiFile> map;
+
+    ApiFile(const boost::filesystem::path &path)
+        : path(path), contentType(), gzipped(false) {}
+};
+
+/** Scene scervice file mapping.
+ */
+
 /** SLPK archive reader
  */
 class Archive {
@@ -171,10 +194,20 @@ public:
      */
     math::Size2 textureSize(const Node &node, int index = 0) const;
 
+    /** Stuff below supports scene service infrastructure for I3S over-the-web
+     *  REST API.
+     */
+
     /** Generates information needed for serving scene layer contained in this
      *  SLPK over HTTP.
+     *
+     * NB: scene service info is serialized to sceneServiceInfo output stream.
      */
-    std::pair<SceneLayerInfo, std::string> sceneServerConfig() const;
+    SceneLayerInfo sceneServerConfig(std::ostream &sceneServiceInfo) const;
+
+    /** Obtain file mapping for URL to file.
+     */
+    ApiFile::map sceneServiceFileMapping();
 
 private:
     roarchive::RoArchive archive_;

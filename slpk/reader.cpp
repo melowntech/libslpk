@@ -29,6 +29,7 @@
 #include <string>
 #include <tuple>
 #include <fstream>
+#include <algorithm>
 
 #include <boost/utility/in_place_factory.hpp>
 #include <boost/filesystem.hpp>
@@ -67,6 +68,15 @@ const std::string SceneLayer("3dSceneLayer.json");
 const std::string NodeIndex("3dNodeIndexDocument.json");
 const std::string SharedResource("sharedResource.json");
 const fs::path gzExt(".gz");
+const fs::path jsonExt(".json");
+
+typedef std::pair<std::string, bool> SpecialFile;
+std::vector<SpecialFile> specialFiles = {{
+        { SceneLayer, true, }
+        , { NodeIndex, true }
+        , { SharedResource, true }
+        , { MetadataName, false }
+    }};
 } // namespace constants
 
 struct ExtInfo {
@@ -1002,7 +1012,6 @@ void loadMesh(MeshLoader &loader, const Node &node
             "not implemented yet.";
         break;
     }
-
 }
 
 void loadMesh(MeshLoader &loader, const Node &node
@@ -1135,22 +1144,7 @@ Archive::istream(const fs::path &path
 
 roarchive::IStream::pointer Archive::rawistream(const fs::path &path) const
 {
-    switch (metadata_.resourceCompressionType) {
-    case ResourceCompressionType::none:
-        return archive_.istream(path);
-
-    case ResourceCompressionType::gzip: {
-        const auto gzPath(utility::addExtension(path, constants::gzExt));
-        if (archive_.exists(gzPath)) {
-            return archive_.istream(gzPath);
-        }
-        return archive_.istream(path);
-    } break;
-    }
-
-    LOGTHROW(err1, std::runtime_error)
-        << "Invalid ResourceCompressionType in metadata.";
-    throw;
+    return archive_.istream(path);
 }
 
 Node Archive::loadNodeIndex(const fs::path &dir) const
@@ -1325,11 +1319,8 @@ geo::SrsDefinition Archive::srs() const
     return sli_.spatialReference.srs();
 }
 
-std::pair<SceneLayerInfo, std::string> Archive::sceneServerConfig() const
+SceneLayerInfo Archive::sceneServerConfig(std::ostream &sceneServiceInfo) const
 {
-    std::pair<SceneLayerInfo, std::string> out;
-    out.first = sli_;
-
     Json::Value config(Json::objectValue);
     config["serviceName"] = "SceneService";
     config["serviceVersion"] = "1.4";
@@ -1339,12 +1330,66 @@ std::pair<SceneLayerInfo, std::string> Archive::sceneServerConfig() const
     auto &layers(config["layers"] = Json::arrayValue);
     layers.append(boost::any_cast<const Json::Value&>(rawSli_));
 
-    std::ostringstream os;
-    os.precision(15);
-    Json::write(os, config);
-    out.second = os.str();
+    Json::write(sceneServiceInfo, config, false);
 
-    return out;
+    return sli_;
 }
+
+ApiFile::map Archive::sceneServiceFileMapping()
+{
+    // build layer prefix
+    const auto layerPrefix
+        = utility::Uri::joinAndRemoveDotSegments("/", sli_.href)
+        .substr(1);
+
+    ApiFile::map fm;
+
+    for (ApiFile apiFile : archive_.list()) {
+        auto path(layerPrefix / apiFile.path);
+        auto ext(path.extension());
+
+        // if path ends with .gz then remove it
+        apiFile.gzipped = (ext == constants::gzExt);
+        if (apiFile.gzipped) {
+            path.replace_extension();
+            ext = path.extension();
+        }
+
+        const auto filename(path.filename().string());
+
+        if (ext == constants::jsonExt) {
+            apiFile.contentType = "application/json; charset=UTF-8";
+
+            const auto fspecialFiles
+                (std::find_if(constants::specialFiles.begin()
+                              , constants::specialFiles.end()
+                              , [&filename](const constants::SpecialFile &sf)
+                              {
+                                  return filename == sf.first;
+                              }));
+
+            if (fspecialFiles != constants::specialFiles.end()) {
+                // skip hidden file
+                if (!fspecialFiles->second) { continue; }
+
+                // this is directory handled by special JSON file
+                auto spath(path.parent_path().string());
+
+                fm.insert(ApiFile::map::value_type(spath, apiFile));
+                spath.push_back('/');
+                fm.insert(ApiFile::map::value_type(spath, apiFile));
+                continue;
+            }
+        } else {
+            // TODO: fill in proper content type
+        }
+
+        // other files
+        fm.insert(ApiFile::map::value_type(path.string(), apiFile));
+    }
+
+    return fm;
+}
+
 
 } // namespace slpk
