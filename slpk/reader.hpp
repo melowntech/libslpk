@@ -23,6 +23,7 @@
  * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGE.
  */
+
 #ifndef slpk_reader_hpp_included_
 #define slpk_reader_hpp_included_
 
@@ -106,25 +107,6 @@ struct Mesh {
     SubMesh::list submeshes;
 };
 
-struct ApiFile {
-    /** Stored file's path
-     */
-    boost::filesystem::path path;
-
-    /** File's content type.
-     */
-    std::string contentType;
-
-    /** Is file gzipped?
-     */
-    bool gzipped;
-
-    typedef std::map<std::string, ApiFile> map;
-
-    ApiFile(const boost::filesystem::path &path)
-        : path(path), contentType(), gzipped(false) {}
-};
-
 /** Scene scervice file mapping.
  */
 
@@ -158,6 +140,10 @@ public:
     roarchive::IStream::pointer
     rawistream(const boost::filesystem::path &path) const;
 
+    /** Returns real path to resource.
+     */
+    boost::filesystem::path realPath(const boost::filesystem::path &path);
+
     /** Returns loaded scene layer info.
      */
     const SceneLayerInfo& sceneLayerInfo() const { return sli_; }
@@ -165,8 +151,13 @@ public:
     geo::SrsDefinition srs() const;
 
     /** Loads node index from given path inside archive.
+     *
+     * \param dir node directory
+     * \param path real path to node file (filled when non-null);
+     * \return loaded node
      */
-    Node loadNodeIndex(const boost::filesystem::path &dir) const;
+    Node loadNodeIndex(const boost::filesystem::path &dir
+                       , boost::filesystem::path *path = nullptr) const;
 
     /** Load root node (from path stated in scene layer info).
      */
@@ -175,6 +166,10 @@ public:
     /** Loads whole node tree.
      */
     Tree loadTree() const;
+
+    /** Loads whole node tree as a list of extended node info.
+     */
+    NodeInfo::list loadNodes() const;
 
     /** Loads node geometry. Possibly more meshes than just one.
      */
@@ -194,20 +189,13 @@ public:
      */
     math::Size2 textureSize(const Node &node, int index = 0) const;
 
-    /** Stuff below supports scene service infrastructure for I3S over-the-web
-     *  REST API.
+    /** Get raw scene layer info as decoded from file.
      */
+    const boost::any& rawSceneLayerInfo() const { return rawSli_; }
 
-    /** Generates information needed for serving scene layer contained in this
-     *  SLPK over HTTP.
-     *
-     * NB: scene service info is serialized to sceneServiceInfo output stream.
+    /** Get list of all files.
      */
-    SceneLayerInfo sceneServerConfig(std::ostream &sceneServiceInfo) const;
-
-    /** Obtain file mapping for URL to file.
-     */
-    ApiFile::map sceneServiceFileMapping();
+    roarchive::Files fileList() const;
 
 private:
     roarchive::RoArchive archive_;

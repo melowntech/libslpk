@@ -53,6 +53,8 @@
 #include "jsoncpp/io.hpp"
 
 #include "./reader.hpp"
+#include "./restapi.hpp"
+#include "./detail/files.hpp"
 
 namespace fs = boost::filesystem;
 namespace bio = boost::iostreams;
@@ -61,23 +63,6 @@ namespace bin = utility::binaryio;
 namespace slpk {
 
 namespace {
-
-namespace constants {
-const std::string MetadataName(MainFile);
-const std::string SceneLayer("3dSceneLayer.json");
-const std::string NodeIndex("3dNodeIndexDocument.json");
-const std::string SharedResource("sharedResource.json");
-const fs::path gzExt(".gz");
-const fs::path jsonExt(".json");
-
-typedef std::pair<std::string, bool> SpecialFile;
-std::vector<SpecialFile> specialFiles = {{
-        { SceneLayer, true, }
-        , { NodeIndex, true }
-        , { SharedResource, true }
-        , { MetadataName, false }
-    }};
-} // namespace constants
 
 struct ExtInfo {
     std::string extension;
@@ -1054,21 +1039,23 @@ void SceneLayerInfo::finish(const std::string &cwd)
 
 Archive::Archive(const fs::path &root, const std::string &mime)
     : archive_
-      (root, roarchive::OpenOptions().setHint(constants::MetadataName)
+      (root, roarchive::OpenOptions().setHint(detail::constants::MetadataName)
        .setMime(mime))
-    , metadata_(loadMetadata(archive_.istream(constants::MetadataName)))
+    , metadata_(loadMetadata(archive_.istream
+                             (detail::constants::MetadataName)))
 {
     std::tie(sli_, rawSli_)
-        = loadSceneLayerInfo(istream(constants::SceneLayer));
+        = loadSceneLayerInfo(istream(detail::constants::SceneLayer));
     sli_.finish();
 }
 
 Archive::Archive(roarchive::RoArchive &archive)
-    : archive_(archive.applyHint(constants::MetadataName))
-    , metadata_(loadMetadata(archive_.istream(constants::MetadataName)))
+    : archive_(archive.applyHint(detail::constants::MetadataName))
+    , metadata_(loadMetadata(archive_.istream
+                             (detail::constants::MetadataName)))
 {
     std::tie(sli_, rawSli_)
-        = loadSceneLayerInfo(istream(constants::SceneLayer));
+        = loadSceneLayerInfo(istream(detail::constants::SceneLayer));
     sli_.finish();
 }
 
@@ -1079,7 +1066,8 @@ roarchive::IStream::pointer Archive::istream(const fs::path &path) const
         return archive_.istream(path);
 
     case ResourceCompressionType::gzip: {
-        const auto gzPath(utility::addExtension(path, constants::gzExt));
+        const auto gzPath
+            (utility::addExtension(path, detail::constants::ext::gz));
         if (archive_.exists(gzPath)) {
             return archive_.istream
                 (gzPath, [](bio::filtering_istream &fis) {
@@ -1116,7 +1104,8 @@ Archive::istream(const fs::path &path
             return archive_.istream(path);
 
         case ResourceCompressionType::gzip: {
-            const auto gzPath(utility::addExtension(ePath, constants::gzExt));
+            const auto gzPath
+                (utility::addExtension(ePath, detail::constants::ext::gz));
             if (archive_.exists(ePath)) {
                 return archive_.istream(ePath);
             } else if (left && !archive_.exists(gzPath)) { continue; }
@@ -1142,24 +1131,36 @@ Archive::istream(const fs::path &path
     throw;
 }
 
+fs::path Archive::realPath(const boost::filesystem::path &path)
+{
+    switch (metadata_.resourceCompressionType) {
+    case ResourceCompressionType::none:
+        return path;
+
+    case ResourceCompressionType::gzip: {
+        const auto gzPath
+            (utility::addExtension(path, detail::constants::ext::gz));
+        if (archive_.exists(gzPath)) { return gzPath; }
+        return path;
+    } break;
+    }
+
+    LOGTHROW(err1, std::runtime_error)
+        << "Invalid ResourceCompressionType in metadata.";
+    throw;
+}
+
 roarchive::IStream::pointer Archive::rawistream(const fs::path &path) const
 {
     return archive_.istream(path);
 }
 
-Node Archive::loadNodeIndex(const fs::path &dir) const
+Node Archive::loadNodeIndex(const fs::path &dir
+                            , boost::filesystem::path *path) const
 {
-#if 0
-    LOG(info4) << "loading: " << dir;
-    std::ostringstream os;
-    bio::copy
-        (istream(joinPaths(dir.string(), constants::NodeIndex))->get(), os);
-    LOG(info4) << os.str();
-#endif
-
-    return slpk::loadNodeIndex
-        (istream(joinPaths(dir.string(), constants::NodeIndex))
-         , dir.string(), sli_.store);
+    auto is(istream(joinPaths(dir.string(), detail::constants::NodeIndex)));
+    if (path) { *path = is->index(); }
+    return slpk::loadNodeIndex(is, dir.string(), sli_.store);
 }
 
 Node Archive::loadRootNodeIndex() const
@@ -1194,6 +1195,27 @@ Tree Archive::loadTree() const
     }
 
     return tree;
+}
+
+NodeInfo::list Archive::loadNodes() const
+{
+    NodeInfo::list nodes;
+
+    std::queue<std::string> queue;
+    queue.push(sli_.store->rootNode);
+
+    boost::filesystem::path path;
+    while (!queue.empty()) {
+        const auto &href(queue.front());
+        auto node(loadNodeIndex(href, &path));
+        nodes.push_back(NodeInfo(href, path.string(), std::move(node)));
+        for (const auto &child : nodes.back().node.children) {
+            queue.push(child.href);
+        }
+        queue.pop();
+    }
+
+    return nodes;
 }
 
 void Archive::loadGeometry(GeometryLoader &loader, const Node &node) const
@@ -1319,77 +1341,152 @@ geo::SrsDefinition Archive::srs() const
     return sli_.spatialReference.srs();
 }
 
-SceneLayerInfo Archive::sceneServerConfig(std::ostream &sceneServiceInfo) const
+roarchive::Files Archive::fileList() const
 {
-    Json::Value config(Json::objectValue);
-    config["serviceName"] = "SceneService";
-    config["serviceVersion"] = "1.4";
-    (config["supportedBindings"] = Json::arrayValue).append("REST");
-    (config["supportedOperations"] = Json::arrayValue).append("BASE");
-
-    auto &layers(config["layers"] = Json::arrayValue);
-    layers.append(boost::any_cast<const Json::Value&>(rawSli_));
-
-    Json::write(sceneServiceInfo, config, false);
-
-    return sli_;
+    return archive_.list();
 }
 
-ApiFile::map Archive::sceneServiceFileMapping()
+RestApi::RestApi(Archive &&archive)
+    : archive_(std::move(archive))
 {
+    const auto add([&](const std::string &path, const ApiFile &af)
+    {
+        files_.insert(ApiFile::map::value_type(path, af));
+    });
+
+    const auto addSlashed([&](const fs::path &path, const ApiFile &af)
+    {
+        auto spath(path.string());
+        add(spath, af);
+        if (spath.back() == '/') {
+            spath.resize(spath.size() - 1);
+        } else {
+            spath.push_back('/');
+        }
+        add(spath, af);
+    });
+
+    // build SceneServer
+    {
+        std::ostringstream os;
+
+        Json::Value config(Json::objectValue);
+        config["serviceName"] = "SceneService";
+        config["serviceVersion"] = "1.4";
+        (config["supportedBindings"] = Json::arrayValue).append("REST");
+        (config["supportedOperations"] = Json::arrayValue).append("BASE");
+
+        auto &layers(config["layers"] = Json::arrayValue);
+        layers.append(boost::any_cast<const Json::Value&>
+                      (archive_.rawSceneLayerInfo()));
+
+        Json::write(os, config, false);
+
+        ApiFile af;
+        af.contentType = "text/plain;charset=utf-8";
+        af.content = os.str();
+        addSlashed(constants::SceneServer, af);
+    }
+
+    const auto &sli(archive_.sceneLayerInfo());
+
     // build layer prefix
-    const auto layerPrefix
-        = utility::Uri::joinAndRemoveDotSegments("/", sli_.href)
+    const fs::path layerPrefix
+        = utility::Uri::joinAndRemoveDotSegments
+        ("/" + constants::SceneServer + "/", sli.href)
         .substr(1);
 
-    ApiFile::map fm;
-
-    for (ApiFile apiFile : archive_.list()) {
-        auto path(layerPrefix / apiFile.path);
+    const auto buildApiFile([&](ApiFile af) -> ApiFile
+    {
+        auto path(af.path);
         auto ext(path.extension());
+        bool gzipped(ext == detail::constants::ext::gz);
 
-        // if path ends with .gz then remove it
-        apiFile.gzipped = (ext == constants::gzExt);
-        if (apiFile.gzipped) {
+        if (gzipped) {
+            af.transferEncoding = "gzip";
             path.replace_extension();
             ext = path.extension();
         }
 
-        const auto filename(path.filename().string());
-
-        if (ext == constants::jsonExt) {
-            apiFile.contentType = "application/json; charset=UTF-8";
-
-            const auto fspecialFiles
-                (std::find_if(constants::specialFiles.begin()
-                              , constants::specialFiles.end()
-                              , [&filename](const constants::SpecialFile &sf)
-                              {
-                                  return filename == sf.first;
-                              }));
-
-            if (fspecialFiles != constants::specialFiles.end()) {
-                // skip hidden file
-                if (!fspecialFiles->second) { continue; }
-
-                // this is directory handled by special JSON file
-                auto spath(path.parent_path().string());
-
-                fm.insert(ApiFile::map::value_type(spath, apiFile));
-                spath.push_back('/');
-                fm.insert(ApiFile::map::value_type(spath, apiFile));
-                continue;
-            }
-        } else {
-            // TODO: fill in proper content type
+        if (ext == detail::constants::ext::json) {
+            af.contentType = "text/plain;charset=utf-8";
         }
 
-        // other files
-        fm.insert(ApiFile::map::value_type(path.string(), apiFile));
+        return af;
+    });
+
+    addSlashed
+        (layerPrefix, buildApiFile
+         (archive_.realPath(detail::constants::SceneLayer)));
+
+    typedef std::map<std::string, fs::path> BasePathMap;
+    BasePathMap basePathMap;
+    for (const auto &path : archive_.fileList()) {
+        auto fname(path.filename().string());
+        auto dot(fname.find('.'));
+        if (dot == std::string::npos) {
+            // no dot, as is
+            basePathMap.insert(BasePathMap::value_type(path.string(), path));
+            continue;
+        }
+
+        // trim all extensions
+        basePathMap.insert
+            (BasePathMap::value_type
+             ((path.parent_path() / fname.substr(0, dot)).string(), path));
     }
 
-    return fm;
+    const auto addResource([&](const Resource &resource) -> void
+    {
+        const auto href(resource.href);
+        auto fbasePathMap(basePathMap.find(href));
+        if (fbasePathMap == basePathMap.end()) { return; }
+
+        // compose API file
+        ApiFile af(fbasePathMap->second);
+        af.contentType = resource.encoding->mime;
+        add((layerPrefix / fbasePathMap->first).string(), buildApiFile(af));
+    });
+
+    const auto addResources([&](const Resource::list &resources)
+    {
+        for (const auto &resource : resources) { addResource(resource); }
+    });
+
+    for (const auto &ni : archive_.loadNodes()) {
+        addSlashed(layerPrefix / ni.href, buildApiFile(fs::path(ni.fullpath)));
+
+        if (ni.node.sharedResource) {
+            const fs::path path(ni.node.sharedResource->href);
+            addSlashed
+                (layerPrefix / path, buildApiFile
+                 (archive_.realPath
+                  (path / detail::constants::SharedResource)));
+        }
+        addResources(ni.node.featureData);
+        addResources(ni.node.geometryData);
+        addResources(ni.node.textureData);
+        // TODO: geometry, store, etc
+    }
 }
 
+std::pair<roarchive::IStream::pointer, const ApiFile*>
+RestApi::file(const boost::filesystem::path &path) const
+{
+    // try to find file
+    auto ffiles(files_.find(path.string()));
+
+    if (ffiles == files_.end()) {
+        LOGTHROW(err1, roarchive::NoSuchFile)
+            << "File " << path << " not found in the SLPK archive.";
+    }
+
+    std::pair<roarchive::IStream::pointer, const ApiFile*>
+        result({}, &ffiles->second);
+    if (result.second->content.empty()) {
+        result.first = archive_.rawistream(result.second->path);
+    }
+    return result;
+}
 
 } // namespace slpk

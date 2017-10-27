@@ -23,6 +23,7 @@
  * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGE.
  */
+
 #ifndef slpk_types_hpp_included_
 #define slpk_types_hpp_included_
 
@@ -48,9 +49,11 @@
 
 #include "geo/srsdef.hpp"
 
+#include "./detail/files.hpp"
+
 namespace slpk {
 
-const std::string MainFile("metadata.json");
+const std::string MainFile(detail::constants::MetadataName);
 
 UTILITY_GENERATE_ENUM_CI(FolderPattern,
                          ((basic)("BASIC"))
@@ -476,6 +479,21 @@ struct Tree {
         if (fnodes == nodes.end()) { return nullptr; }
         return &fnodes->second;
     }
+};
+
+/** Expanded node info.
+ */
+struct NodeInfo {
+    std::string href;
+    std::string fullpath;
+    Node node;
+
+    NodeInfo(std::string href, std::string fullpath, Node node)
+        : href(std::move(href)), fullpath(std::move(fullpath))
+        , node(std::move(node))
+    {}
+
+    typedef std::vector<NodeInfo> list;
 };
 
 // inlines
