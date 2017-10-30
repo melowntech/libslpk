@@ -1489,4 +1489,14 @@ RestApi::file(const boost::filesystem::path &path) const
     return result;
 }
 
+bool Archive::changed() const
+{
+    return archive_.changed();
+}
+
+bool RestApi::changed() const
+{
+    return archive_.changed();
+}
+
 } // namespace slpk

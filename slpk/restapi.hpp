@@ -76,6 +76,10 @@ public:
     std::pair<roarchive::IStream::pointer, const ApiFile*>
     file(const boost::filesystem::path &path) const;
 
+    /** Reports whether the underlying archive has been changed.
+     */
+    bool changed() const;
+
 private:
     Archive archive_;
     ApiFile::map files_;

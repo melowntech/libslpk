@@ -197,6 +197,10 @@ public:
      */
     roarchive::Files fileList() const;
 
+    /** Has the underlying archive been changed.
+     */
+    bool changed() const;
+
 private:
     roarchive::RoArchive archive_;
     Metadata metadata_;
