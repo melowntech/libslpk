@@ -370,7 +370,7 @@ struct SceneLayerInfo {
     void finish(const std::string &cwd = "");
 };
 
-struct MeanBoundingSphere {
+struct MinimumBoundingSphere {
     double x;
     double y;
     double z;
@@ -379,7 +379,7 @@ struct MeanBoundingSphere {
 
 struct NodeReference {
     std::string id;
-    MeanBoundingSphere mbs;
+    MinimumBoundingSphere mbs;
     std::string href;
     std::string version;
     int featureCount;
@@ -426,7 +426,7 @@ struct LodSelection {
 
 struct Feature {
     int id;
-    MeanBoundingSphere mbs;
+    MinimumBoundingSphere mbs;
     int lodChildFeatures;
     std::vector<std::string> lodChildNodes;
     int rank;
@@ -441,7 +441,7 @@ struct Node {
     std::string id;
     int level;
     std::string version;
-    MeanBoundingSphere mbs;
+    MinimumBoundingSphere mbs;
     boost::optional<std::time_t> created;
     boost::optional<std::time_t> expires;
     boost::optional<math::Matrix4> transform;

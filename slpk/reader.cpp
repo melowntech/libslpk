@@ -431,7 +431,8 @@ loadSceneLayerInfo(const roarchive::IStream::pointer &in)
     return loadSceneLayerInfo(in->get(), in->path());
 }
 
-void parse(MeanBoundingSphere &mbs, const Json::Value &value, const char *name)
+void parse(MinimumBoundingSphere &mbs, const Json::Value &value
+           , const char *name)
 {
     Json::get(mbs.x, value, 0, name);
     Json::get(mbs.y, value, 1, name);
