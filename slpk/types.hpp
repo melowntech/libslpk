@@ -29,6 +29,7 @@
 
 #include <cstddef>
 #include <map>
+#include <set>
 #include <memory>
 #include <functional>
 #include <algorithm>
@@ -48,6 +49,8 @@
 #include "utility/enum-io.hpp"
 
 #include "geo/srsdef.hpp"
+
+#include "roarchive/roarchive.hpp"
 
 #include "./detail/files.hpp"
 
@@ -150,6 +153,8 @@ UTILITY_GENERATE_ENUM_CI(ResourcePattern,
                          ((texture)("Texture"))
                          ((attributes)("Attributes"))
                          )
+
+typedef std::vector<ResourcePattern> ResourcePatterns;
 
 UTILITY_GENERATE_ENUM_CI(NormalReferenceFrame,
                          ((eastNorthUp)("east-north-up"))
@@ -308,7 +313,7 @@ struct Store {
     std::string id;
     Profile profile;
 
-    std::vector<ResourcePattern> resourcePattern;
+    ResourcePatterns resourcePattern;
     std::string rootNode;
     std::string version;
     math::Extents2 extents;
@@ -345,6 +350,14 @@ private:
     PreferredEncoding preferredTextureEncoding_;
 };
 
+UTILITY_GENERATE_ENUM_CI(Capability,
+                         ((view)("View"))
+                         ((query)("Query"))
+                         ((edit)("Edit"))
+                         )
+
+typedef std::set<Capability> Capabilities;
+
 struct SceneLayerInfo {
     int id;
     std::string href;
@@ -357,15 +370,19 @@ struct SceneLayerInfo {
     boost::optional<std::string> description;
     boost::optional<std::string> copyrightText;
 
+    Capabilities capabilities;
+
     Store::pointer store;
 
-    // capabilities
     // cachedDrawingInfo
     // drawingInfo
     // fields
     // attributeStorageInfo
 
-    SceneLayerInfo() : id() , layerType(LayerType::object) {}
+    SceneLayerInfo()
+        : id() , layerType(LayerType::object)
+        , store(std::make_shared<Store>())
+    {}
 
     void finish(const std::string &cwd = "");
 };
@@ -375,6 +392,8 @@ struct MinimumBoundingSphere {
     double y;
     double z;
     double r;
+
+    MinimumBoundingSphere() : x(), y(), z(), r() {}
 };
 
 struct NodeReference {
@@ -385,6 +404,8 @@ struct NodeReference {
     int featureCount;
 
     typedef std::vector<NodeReference> list;
+
+    NodeReference() : featureCount() {}
 };
 
 struct FeatureRange {
@@ -456,10 +477,18 @@ struct Node {
     boost::optional<LodSelection> lodSelection;
     Feature::list features;
 
-    Node(const Store::pointer &store) : store_(store) {}
+    Node(const Store::pointer &store = Store::pointer()) : store_(store) {}
     const Store& store() const { return *store_; }
 
     bool hasGeometry() const { return !geometryData.empty(); }
+
+    NodeReference reference() const {
+        NodeReference nr;
+        nr.id = id;
+        nr.version = version;
+        nr.mbs = mbs;
+        return nr;
+    }
 
     typedef std::map<std::string, Node> map;
 

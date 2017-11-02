@@ -418,7 +418,6 @@ loadSceneLayerInfo(std::istream &in, const fs::path &path)
                             , Json::objectValue, "heightModelInfo"));
     }
 
-    sli.store = std::make_shared<Store>();
     parse(*sli.store
           , Json::check(value["store"], Json::objectValue, "store"));
 

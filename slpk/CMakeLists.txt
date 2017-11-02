@@ -11,6 +11,7 @@ define_module(LIBRARY slpk=${slpk_VERSION}
 
 set(slpk_SOURCES
   reader.hpp reader.cpp
+  writer.hpp writer.cpp
   restapi.hpp
 )
 
