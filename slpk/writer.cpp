@@ -32,13 +32,12 @@
 #include <algorithm>
 #include <atomic>
 #include <mutex>
+#include <utility>
 
 #include <boost/utility/in_place_factory.hpp>
 #include <boost/filesystem.hpp>
 #include <boost/lexical_cast.hpp>
-#include <boost/iostreams/filter/zlib.hpp>
-#include <boost/iostreams/filter/gzip.hpp>
-#include <boost/iostreams/copy.hpp>
+#include <boost/format.hpp>
 
 #include "dbglog/dbglog.hpp"
 
@@ -59,7 +58,6 @@
 #include "./detail/files.hpp"
 
 namespace fs = boost::filesystem;
-namespace bio = boost::iostreams;
 namespace bin = utility::binaryio;
 
 namespace slpk {
@@ -72,6 +70,7 @@ std::string asString(const T &value)
     return boost::lexical_cast<std::string>(value);
 }
 
+// fwd
 template <typename T>
 void build(Json::Value &value, const std::vector<T> &array);
 
@@ -111,17 +110,142 @@ void build(Json::Value &value, const HeightModelInfo &hmi)
     value["heightUnit"] = hmi.heightUnit;
 }
 
-void build(Json::Value &value, const Store &store)
+void build(Json::Value &value, const math::Extents2 &extents)
+{
+    value = Json::arrayValue;
+    value.append(extents.ll(0));
+    value.append(extents.ll(1));
+    value.append(extents.ur(0));
+    value.append(extents.ur(1));
+}
+
+void build(Json::Value &value, const Encoding &encoding)
+{
+    value = encoding.mime;
+}
+
+void build(Json::Value &value, const Encoding::list &encodings)
+{
+    value = Json::arrayValue;
+    for (const auto encoding : encodings) { value.append(encoding.mime); }
+}
+
+void build(Json::Value &value, const Cardinality &cardinality)
+{
+    value = Json::arrayValue;
+    value.append(cardinality.min);
+    value.append(cardinality.max);
+}
+
+void build(Json::Value &value, const IndexScheme &indexingScheme)
+{
+    value = Json::objectValue;
+    value["name"] = asString(indexingScheme.name);
+    value["inclusive"] = indexingScheme.inclusive;
+    value["dimensionality"] = indexingScheme.dimensionality;
+    build(value["childrenCardinality"], indexingScheme.childrenCardinality);
+    build(value["neighborCardinality"], indexingScheme.neighborCardinality);
+}
+
+void build(Json::Value &value, const HeaderAttribute &header)
+{
+    value = Json::objectValue;
+    value["property"] = header.property;
+    value["type"] = asString(header.type);
+}
+
+void build(Json::Value &value, const GeometryAttribute &attr)
+{
+    value = Json::objectValue;
+    if (attr.byteOffset) { value["byteOffset"] = Json::Int(attr.byteOffset); }
+    if (attr.count) { value["count"] = Json::Int(attr.count); }
+    value["valueType"] = asString(attr.valueType);
+    value["valuesPerElement"] = Json::Int(attr.valuesPerElement);
+
+    // TODO: values?
+    if (!attr.componentIndices.empty()) {
+        auto jcomponentIndices(value["componentIndices"] = Json::arrayValue);
+        for (auto ci : attr.componentIndices) { jcomponentIndices.append(ci); }
+    }
+}
+
+void build(Json::Value &jattrs, Json::Value &jordering
+           , const GeometryAttribute::list &attrs)
+{
+    jattrs = Json::objectValue;
+    jordering = Json::arrayValue;
+    for (const auto &attr : attrs) {
+        build(jattrs[attr.key], attr);
+        jordering.append(attr.key);
+    }
+}
+
+void build(Json::Value &value, const GeometrySchema &geometrySchema)
+{
+    value = Json::objectValue;
+    value["geometryType"] = asString(geometrySchema.geometryType);
+    value["topology"] = asString(geometrySchema.topology);
+    build(value["header"], geometrySchema.header);
+
+    if (!geometrySchema.vertexAttributes.empty()) {
+        build(value["vertexAttributes"], value["ordering"]
+              , geometrySchema.vertexAttributes);
+    }
+
+    if (!geometrySchema.faces.empty()) {
+        build(value["faces"], geometrySchema.faces);
+    }
+
+    if (!geometrySchema.featureAttributes.empty()) {
+        build(value["featureAttributes"], value["featureAttributeOrder"]
+              , geometrySchema.featureAttributes);
+    }
+}
+
+void build(Json::Value &value, const Store &store, const Metadata &metadata)
 {
     value = Json::objectValue;
     value["id"] = store.id;
     value["profile"] = asString(store.profile);
     build(value["resourcePattern"], store.resourcePattern);
 
+    value["rootNode"] = store.rootNode;
+    value["version"] = store.version;
+    build(value["extents"], store.extents);
+
+    value["normalReferenceFrame"] = asString(store.normalReferenceFrame);
+
+    {
+        const auto gzipped
+            (metadata.resourceCompressionType
+             == ResourceCompressionType::gzip);
+        std::string jsonEncoding
+            (str(boost::format
+                 ("application/vnd.esri.I3S.json%s; version=%d.%d")
+                 % (gzipped ? "+gzip" : "")
+                 % metadata.version.major
+                 % metadata.version.minor));
+
+        value["nidEncoding"] = jsonEncoding;
+        value["featureEncoding"] = jsonEncoding;
+        value["geometryEncoding"] = jsonEncoding;
+    }
+
+    build(value["textureEncoding"], store.textureEncoding);
+    value["lodType"] = asString(store.lodType);
+    value["lodModel"] = asString(store.lodModel);
+
+    build(value["indexingScheme"], store.indexingScheme);
+
+    if (store.defaultGeometrySchema) {
+        build(value["defaultGeometrySchema"], *store.defaultGeometrySchema);
+    }
+
     // TODO: fill me in pls, thx
 }
 
-void build(Json::Value &value, const SceneLayerInfo &sli)
+void build(Json::Value &value, const SceneLayerInfo &sli
+           , const Metadata &metadata)
 {
     value = Json::objectValue;
     value["id"] = sli.id;
@@ -138,7 +262,14 @@ void build(Json::Value &value, const SceneLayerInfo &sli)
 
     build(value["heightModelInfo"], sli.heightModelInfo);
 
-    if (sli.store) { build(value["store"], *sli.store); }
+    if (sli.store) {
+        auto &store(value["store"]);
+        build(store, *sli.store, metadata);
+        auto crs(str(boost::format("http://www.opengis.net/def/crs/EPSG/0/%d")
+                     % sli.spatialReference.wkid));
+        value["indexCRS"] = crs;
+        value["vertexCRS"] = crs;
+    }
 }
 
 void build(Json::Value &value, const Version &version)
@@ -177,6 +308,23 @@ void build(Json::Value &value, const NodeReference &nodeReference)
     value["featureCount"] = nodeReference.featureCount;
 }
 
+void build(Json::Value &value, const Resource &resource)
+{
+    value = Json::objectValue;
+    value["href"] = resource.href;
+    // TODO: rest
+}
+
+void build(Json::Value &value, const LodSelection &lodSelection)
+{
+    value = Json::objectValue;
+    value["metricType"] = asString(lodSelection.metricType);
+    if (lodSelection.maxValue) { value["maxValue"] = lodSelection.maxValue; }
+    if (lodSelection.avgValue) { value["avgValue"] = lodSelection.avgValue; }
+    if (lodSelection.minValue) { value["minValue"] = lodSelection.minValue; }
+    if (lodSelection.maxError) { value["maxError"] = lodSelection.maxError; }
+}
+
 void build(Json::Value &value, const Node &node)
 {
     value = Json::objectValue;
@@ -189,9 +337,27 @@ void build(Json::Value &value, const Node &node)
 
     build(value["children"], node.children);
     build(value["neighbors"], node.neighbors);
+
+    if (node.sharedResource) {
+        build(value["sharedResource"], *node.sharedResource);
+    }
+
+    if (!node.featureData.empty()) {
+        build(value["featureData"], node.featureData);
+    }
+    if (!node.geometryData.empty()) {
+        build(value["geometryData"], node.geometryData);
+    }
+    if (!node.textureData.empty()) {
+        build(value["textureData"], node.textureData);
+    }
+
+    if (!node.lodSelection.empty()) {
+        build(value["lodSelection"], node.lodSelection);
+    }
 }
 
-// implementation must be here
+// implementation must be here to see other build functions
 template <typename T>
 void build(Json::Value &value, const std::vector<T> &array)
 {
@@ -199,6 +365,12 @@ void build(Json::Value &value, const std::vector<T> &array)
     for (const auto &item : array) {
         build(value.append({}), item);
     }
+}
+
+template <typename T1, typename T2>
+void build(Json::Value &value, const std::tuple<T1, T2> &tupple)
+{
+    build(value, std::get<0>(tupple), std::get<1>(tupple));
 }
 
 } // namespace
@@ -261,7 +433,8 @@ Writer::Writer(const boost::filesystem::path &path
 
 void Writer::write(const SceneLayerInfo &sli)
 {
-    detail_->store(sli, detail::constants::SceneLayer);
+    detail_->store(std::make_tuple(sli, detail_->metadata)
+                   , detail::constants::SceneLayer);
 }
 
 void Writer::write(const Node &node)

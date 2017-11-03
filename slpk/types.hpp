@@ -298,6 +298,8 @@ struct Encoding {
     typedef std::vector<Encoding> list;
 
     Encoding() : preference(0) {}
+
+    Encoding(const std::string &mime): mime(mime) {}
 };
 
 struct PreferredEncoding {
@@ -333,6 +335,7 @@ struct Store {
 
     Store()
         : profile(Profile::meshpyramids)
+        , extents(math::InvalidExtents{})
         , normalReferenceFrame(NormalReferenceFrame::earthCentered)
         , lodType(LodType::meshPyramid)
         , lodModel(LodModel::nodeSwitching)
@@ -413,6 +416,8 @@ struct FeatureRange {
     int max;
 
     FeatureRange(int min = 0, int max = 0) : min(min), max(max) {}
+
+    bool valid() const { return max >= min; }
 };
 
 struct Resource {
@@ -424,8 +429,10 @@ struct Resource {
     int vertexElements;
     int faceElements;
 
-    Resource()
-        : encoding(), multiTextureBundle(), vertexElements(), faceElements() {}
+    Resource(const std::string &href = "")
+        : href(href), encoding(), featureRange(0, -1)
+        , multiTextureBundle(), vertexElements(), faceElements()
+    {}
 
     typedef std::vector<Resource> list;
 };
@@ -441,8 +448,14 @@ struct LodSelection {
     double maxValue;
     double avgValue;
     double minValue;
+    double maxError;
 
-    LodSelection() : maxValue(), avgValue(), minValue() {}
+    LodSelection()
+        : metricType(MetricType::maxScreenThreshold)
+        , maxValue(), avgValue(), minValue(), maxError()
+    {}
+
+    typedef std::vector<LodSelection> list;
 };
 
 struct Feature {
@@ -474,7 +487,7 @@ struct Node {
     Resource::list featureData;
     Resource::list geometryData;
     Resource::list textureData;
-    boost::optional<LodSelection> lodSelection;
+    LodSelection::list lodSelection;
     Feature::list features;
 
     Node(const Store::pointer &store = Store::pointer()) : store_(store) {}
