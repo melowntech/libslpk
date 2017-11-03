@@ -46,6 +46,7 @@
 #include "utility/path.hpp"
 #include "utility/uri.hpp"
 #include "utility/binaryio.hpp"
+#include "utility/format.hpp"
 
 #include "imgproc/readimage.hpp"
 
@@ -61,6 +62,9 @@ namespace fs = boost::filesystem;
 namespace bin = utility::binaryio;
 
 namespace slpk {
+
+TextureSaver::~TextureSaver() {}
+MeshSaver::~MeshSaver() {}
 
 namespace {
 
@@ -373,17 +377,32 @@ void build(Json::Value &value, const std::tuple<T1, T2> &tupple)
     build(value, std::get<0>(tupple), std::get<1>(tupple));
 }
 
+void saveMesh(std::ostream &os, const MeshSaver &meshSaver)
+{
+    // TODO: check layout
+    (void) os;
+    (void) meshSaver;
+}
+
 } // namespace
 
 struct Writer::Detail {
     Detail(const boost::filesystem::path &path
-           , const Metadata &metadata, bool overwrite)
-        : zip(path, overwrite), metadata(metadata)
+           , const Metadata &metadata, const SceneLayerInfo &sli
+           , bool overwrite)
+        : zip(path, overwrite), metadata(metadata), sli(sli)
     {}
 
-    void flush() {
+    void flush(const SceneLayerInfoCallback &callback) {
+        // update and store scene layer
+        if (callback) { callback(sli); }
+        store(std::make_tuple(sli, metadata), detail::constants::SceneLayer);
+
+        // update and save metadata
         metadata.nodeCount = nodeCount;
         store(metadata, detail::constants::MetadataName);
+
+        // done
         zip.close();
     }
 
@@ -419,23 +438,58 @@ struct Writer::Detail {
         os->close();
     }
 
+    void write(Node &node, const TextureSaver &textureSaver
+               , const MeshSaver &meshSaver);
+
     utility::zip::Writer zip;
     std::mutex mutex;
     Metadata metadata;
+    SceneLayerInfo sli;
 
     std::atomic<std::size_t> nodeCount;
 };
 
-Writer::Writer(const boost::filesystem::path &path
-               , const Metadata &metadata, bool overwrite)
-    : detail_(std::make_shared<Detail>(path, metadata, overwrite))
-{}
-
-void Writer::write(const SceneLayerInfo &sli)
+void Writer::Detail::write(Node &node, const TextureSaver &textureSaver
+                           , const MeshSaver &meshSaver)
 {
-    detail_->store(std::make_tuple(sli, detail_->metadata)
-                   , detail::constants::SceneLayer);
+    const auto index(node.geometryData.size());
+
+    // write textures
+    int txi(0);
+    for (const auto &encoding : sli.store->textureEncoding) {
+        const auto href
+            (utility::format("textures/%d_%d", index, txi++));
+        node.textureData.emplace_back("./" + href);
+        const fs::path texturePath
+            (fs::path("nodes") / node.id / (href + ".bin"));
+
+        std::unique_lock<std::mutex> lock(mutex);
+        // TODO: do not report DDS as image (if ever used)
+        auto os(ostream(texturePath, true));
+        textureSaver.save(os->get(), encoding.mime);
+        os->close();
+    }
+
+    // write meshes
+    const auto href(utility::format("geometries/%d", index));
+    node.geometryData.emplace_back("./" + href);
+    const fs::path geometryPath
+        (fs::path("nodes") / node.id / (href + ".bin"));
+
+    // TODO: write without lock to temporary stream
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        auto os(ostream(geometryPath, true));
+        saveMesh(os->get(), meshSaver);
+        os->close();
+    }
 }
+
+Writer::Writer(const boost::filesystem::path &path
+               , const Metadata &metadata, const SceneLayerInfo &sli
+               , bool overwrite)
+    : detail_(std::make_shared<Detail>(path, metadata, sli, overwrite))
+{}
 
 void Writer::write(const Node &node)
 {
@@ -445,9 +499,15 @@ void Writer::write(const Node &node)
     ++detail_->nodeCount;
 }
 
-void Writer::flush()
+void Writer::write(Node &node, const TextureSaver &textureSaver
+                   , const MeshSaver &meshSaver)
 {
-    detail_->flush();
+    detail_->write(node, textureSaver, meshSaver);
+}
+
+void Writer::flush(const SceneLayerInfoCallback &callback)
+{
+    detail_->flush(callback);
 }
 
 } // namespace slpk

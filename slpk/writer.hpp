@@ -31,9 +31,32 @@
 
 #include "utility/zip.hpp"
 
+#include "math/geometry_core.hpp"
+
 #include "./types.hpp"
 
 namespace slpk {
+
+class TextureSaver {
+public:
+    virtual ~TextureSaver();
+    virtual void save(std::ostream &os, const std::string &mimeType) const = 0;
+};
+
+class MeshSaver {
+public:
+    struct Properties {
+        std::size_t vertexCount;
+
+        Properties() : vertexCount() {}
+    };
+
+    virtual ~MeshSaver();
+
+    virtual Properties properties() const = 0;
+    virtual math::Point3d position(std::size_t index) const = 0;
+    virtual math::Point2d uv0(std::size_t index) const = 0;
+};
 
 class Writer {
 public:
@@ -43,7 +66,8 @@ public:
      *  dynamically
      */
     Writer(const boost::filesystem::path &path
-           , const Metadata &metadata = Metadata()
+           , const Metadata &metadata
+           , const SceneLayerInfo &sli
            , bool overwrite = false);
 
     void write(const SceneLayerInfo &sli);
@@ -53,9 +77,18 @@ public:
      */
     void write(const Node &node);
 
-    /** Saves metadata and Flushes output archive.
+    /** Write mesh and texture(s). Update node.
      */
-    void flush();
+    void write(Node &node, const TextureSaver &textureSaver
+               , const MeshSaver &meshSaver);
+
+    typedef std::function<void(SceneLayerInfo&)> SceneLayerInfoCallback;
+
+    /** Saves metadata, 3dSceneLayerInfo and flushes output archive.
+     *  Callback is used to modify 3d scene layer info before final flush.
+     */
+    void flush(const SceneLayerInfoCallback &callback
+               = SceneLayerInfoCallback());
 
     struct Detail;
 

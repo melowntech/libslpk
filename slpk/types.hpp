@@ -286,7 +286,7 @@ struct Encoding {
     std::string mime;
     // filename extension
     std::string ext;
-    // encdings with higher preference value are more preferred, negative value
+    // encodings with higher preference value are more preferred, negative value
     // means type is unsupported
     int preference;
 
@@ -299,7 +299,7 @@ struct Encoding {
 
     Encoding() : preference(0) {}
 
-    Encoding(const std::string &mime): mime(mime) {}
+    Encoding(const std::string &mime) : mime(mime), ext(ext) {}
 };
 
 struct PreferredEncoding {
