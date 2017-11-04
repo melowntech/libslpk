@@ -38,6 +38,7 @@
 #include <boost/filesystem.hpp>
 #include <boost/lexical_cast.hpp>
 #include <boost/format.hpp>
+#include <boost/iostreams/filter/gzip.hpp>
 
 #include "dbglog/dbglog.hpp"
 
@@ -59,6 +60,7 @@
 #include "./detail/files.hpp"
 
 namespace fs = boost::filesystem;
+namespace bio = boost::iostreams;
 namespace bin = utility::binaryio;
 
 namespace slpk {
@@ -407,7 +409,7 @@ struct Writer::Detail {
     }
 
     utility::zip::Writer::OStream::pointer
-    ostream(fs::path path, bool image = false)
+    ostream(const fs::path &path, bool image = false)
     {
         const utility::zip::Compression compression
             ((!image && (metadata.archiveCompressionType
@@ -418,7 +420,16 @@ struct Writer::Detail {
         if (!image && (metadata.resourceCompressionType
                        == ResourceCompressionType::gzip))
         {
-            path = utility::addExtension(path, detail::constants::ext::gz);
+            // add .gz extension and push gzip compressor at the top of this
+            // filter stack
+            return zip.ostream(utility::addExtension
+                               (path, detail::constants::ext::gz)
+                               , compression
+                               , [](bio::filtering_ostream &fos) {
+                                   bio::zlib_params p;
+                                   p.window_bits |= 16;
+                                   fos.push(bio::zlib_compressor(p));
+                               });
         }
 
         return zip.ostream(path, compression);
@@ -479,7 +490,7 @@ void Writer::Detail::write(Node &node, const TextureSaver &textureSaver
     // TODO: write without lock to temporary stream
     {
         std::unique_lock<std::mutex> lock(mutex);
-        auto os(ostream(geometryPath, true));
+        auto os(ostream(geometryPath));
         saveMesh(os->get(), meshSaver);
         os->close();
     }
