@@ -31,7 +31,7 @@
 
 #include "utility/zip.hpp"
 
-#include "math/geometry_core.hpp"
+#include "math/geometry.hpp"
 
 #include "./types.hpp"
 
@@ -46,16 +46,16 @@ public:
 class MeshSaver {
 public:
     struct Properties {
-        std::size_t vertexCount;
+        std::size_t faceCount;
 
-        Properties() : vertexCount() {}
+        Properties() : faceCount() {}
     };
 
     virtual ~MeshSaver();
 
     virtual Properties properties() const = 0;
-    virtual math::Point3d position(std::size_t index) const = 0;
-    virtual math::Point2d uv0(std::size_t index) const = 0;
+    virtual math::Triangle3d face(std::size_t index) const = 0;
+    virtual math::Triangle2d faceTc(std::size_t index) const = 0;
 };
 
 class Writer {

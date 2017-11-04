@@ -379,11 +379,152 @@ void build(Json::Value &value, const std::tuple<T1, T2> &tupple)
     build(value, std::get<0>(tupple), std::get<1>(tupple));
 }
 
-void saveMesh(std::ostream &os, const MeshSaver &meshSaver)
+template <typename T>
+void write(std::ostream &out, DataType type, const T &value)
 {
-    // TODO: check layout
-    (void) os;
-    (void) meshSaver;
+#define WRITE_DATATYPE(ENUM, TYPE)                               \
+    case DataType::ENUM: bin::write(out, TYPE(value)); return
+
+    switch (type) {
+        WRITE_DATATYPE(uint8, std::uint8_t);
+        WRITE_DATATYPE(uint16, std::uint16_t);
+        WRITE_DATATYPE(uint32, std::uint32_t);
+        WRITE_DATATYPE(uint64, std::uint64_t);
+
+        WRITE_DATATYPE(int8, std::int8_t);
+        WRITE_DATATYPE(int16, std::int16_t);
+        WRITE_DATATYPE(int32, std::int32_t);
+        WRITE_DATATYPE(int64, std::int64_t);
+
+        WRITE_DATATYPE(float32, float);
+        WRITE_DATATYPE(float64, double);
+    }
+#undef WRITE_DATATYPE
+
+    LOGTHROW(err1, std::logic_error)
+        << "Invalid datatype (int code="
+        << static_cast<int>(type) << ").";
+    throw;
+}
+
+void write(std::ostream &out, const GeometryAttribute &ga
+           , const math::Point3 &p)
+{
+    write(out, ga.valueType, p(0));
+    write(out, ga.valueType, p(1));
+    write(out, ga.valueType, p(2));
+}
+
+void write(std::ostream &out, const GeometryAttribute &ga
+           , const math::Point2 &p)
+{
+    write(out, ga.valueType, p(0));
+    write(out, ga.valueType, p(1));
+}
+
+class SavePerAttributeArray {
+public:
+    SavePerAttributeArray(std::ostream &os, const MeshSaver &meshSaver
+                          , const GeometrySchema &gs)
+        : os_(os), meshSaver_(meshSaver), gs_(gs)
+        , properties_(meshSaver_.properties())
+    {
+        // save header
+        for (const auto &header : gs_.header) {
+            if (header.property == "vertexCount") {
+                // vertex count = 3 x face count
+                write(os, header.type, properties_.faceCount * 3);
+            } else {
+                LOGTHROW(err2, std::runtime_error)
+                    << "Header element <" << header.property
+                    << "> not supported.";
+            }
+        }
+
+        // save data
+        for (const auto &ga : gs_.vertexAttributes) {
+            if (ga.key == "position") {
+                saveFaces(ga);
+            } else if (ga.key == "uv0") {
+                saveFacesTc(ga);
+            } else {
+                LOGTHROW(err2, std::runtime_error)
+                    << "Geometry attribute <" << ga.key << "> not supported.";
+            }
+        }
+    }
+
+private:
+    void saveFaces(const GeometryAttribute &ga) {
+        if (ga.valuesPerElement != 3) {
+            LOGTHROW(err1, std::runtime_error)
+                << "Number of vertex elements must be 3 not "
+                << ga.valuesPerElement << ".";
+        }
+
+        for (std::size_t i(0), e(properties_.faceCount); i != e; ++i) {
+            const auto &face(meshSaver_.face(i));
+            for (const auto &point : face) {
+                write(os_, ga, point);
+            }
+        }
+    }
+
+    void saveFacesTc(const GeometryAttribute &ga) {
+        if (ga.valuesPerElement != 2) {
+            LOGTHROW(err1, std::runtime_error)
+                << "Number of UV elements must be 2 not "
+                << ga.valuesPerElement << ".";
+        }
+
+        for (std::size_t i(0), e(properties_.faceCount); i != e; ++i) {
+            const auto &face(meshSaver_.faceTc(i));
+            for (const auto &point : face) {
+                write(os_, ga, point);
+            }
+        }
+    }
+
+    std::ostream &os_;
+    const MeshSaver &meshSaver_;
+    const GeometrySchema &gs_;
+    const MeshSaver::Properties properties_;
+};
+
+void saveMesh(std::ostream &os, const MeshSaver &meshSaver
+              , const GeometrySchema &gs)
+{
+    switch (gs.topology) {
+    case Topology::perAttributeArray:
+        SavePerAttributeArray(os, meshSaver, gs);
+        return;
+
+    default:
+        LOGTHROW(err2, std::runtime_error)
+            << "Unsupported geomety topology " << gs.topology << ".";
+    }
+}
+
+const GeometrySchema& getGeometrySchema(const SceneLayerInfo &sli)
+{
+    if (!sli.store || !sli.store->defaultGeometrySchema) {
+        LOGTHROW(err2, std::runtime_error)
+            << "No default geometry schema present.";
+    }
+
+    const auto &gs(*sli.store->defaultGeometrySchema);
+
+    if (gs.geometryType != GeometryType::triangles) {
+        LOGTHROW(err2, std::runtime_error)
+            << "Cannot store nothing else then trianges geometries.";
+    }
+
+    if (gs.topology != Topology::perAttributeArray) {
+        LOGTHROW(err2, std::runtime_error)
+            << "Cannot store nothing else then PerAttributeArray geometries.";
+    }
+
+    return gs;
 }
 
 } // namespace
@@ -392,8 +533,11 @@ struct Writer::Detail {
     Detail(const boost::filesystem::path &path
            , const Metadata &metadata, const SceneLayerInfo &sli
            , bool overwrite)
-        : zip(path, overwrite), metadata(metadata), sli(sli)
-    {}
+        : sli(sli), gs(getGeometrySchema(this->sli)), zip(path, overwrite)
+        , metadata(metadata)
+    {
+
+    }
 
     void flush(const SceneLayerInfoCallback &callback) {
         // update and store scene layer
@@ -452,10 +596,11 @@ struct Writer::Detail {
     void write(Node &node, const TextureSaver &textureSaver
                , const MeshSaver &meshSaver);
 
+    SceneLayerInfo sli;
+    const GeometrySchema &gs;
     utility::zip::Writer zip;
     std::mutex mutex;
     Metadata metadata;
-    SceneLayerInfo sli;
 
     std::atomic<std::size_t> nodeCount;
 };
@@ -491,7 +636,8 @@ void Writer::Detail::write(Node &node, const TextureSaver &textureSaver
     {
         std::unique_lock<std::mutex> lock(mutex);
         auto os(ostream(geometryPath));
-        saveMesh(os->get(), meshSaver);
+        // only per-attribute array
+        saveMesh(os->get(), meshSaver, gs);
         os->close();
     }
 }
