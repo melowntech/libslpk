@@ -761,14 +761,16 @@ void Writer::Detail::write(Node &node, Texture::list &textures
                            , const MeshSaver &meshSaver
                            , const TextureSaver &textureSaver)
 {
+    const auto txId(textureCount++);
+    auto txIdLocal(textures.size());
+
     // add texture
-    auto textureId(textures.size());
-    textures.emplace_back(utility::format("tex%d", textureId));
+    textures.emplace_back(utility::format("tex%d", txId));
     auto &texture(textures.back());
 
     // setup texture
     texture.atlas = true;
-    texture.uvSet = utility::format("uv%d", textureId);
+    texture.uvSet = utility::format("uv%d", txIdLocal);
     texture.channels = "rgb";
 
     auto &image(utility::append(texture.images));
@@ -776,7 +778,7 @@ void Writer::Detail::write(Node &node, Texture::list &textures
     image.size = imageSize.width;
 
     // TODO: what are these levels?
-    image.id = asString(buildId(textureCount++, imageSize, 0, 0));
+    image.id = asString(buildId(txId, imageSize, 0, 0));
 
     const auto index(node.geometryData.size());
 
