@@ -40,6 +40,7 @@ namespace slpk {
 class TextureSaver {
 public:
     virtual ~TextureSaver();
+    virtual math::Size2 imageSize() const = 0;
     virtual void save(std::ostream &os, const std::string &mimeType) const = 0;
 };
 
@@ -72,15 +73,19 @@ public:
 
     void write(const SceneLayerInfo &sli);
 
-    /** Writes node at its proper place in the archive.
-     *  Increments node count in metadata.
+    /** Writes node and its (optional) shared resource definition at their
+     *  respective proper places in the archive.
+     *
+     * Increments node count in metadata.
      */
-    void write(const Node &node);
+    void write(const Node &node
+               , const SharedResource *sharedResource = nullptr);
 
     /** Write mesh and texture(s). Update node.
      */
-    void write(Node &node, const TextureSaver &textureSaver
-               , const MeshSaver &meshSaver);
+    void write(Node &node, Texture::list &textures
+               , const MeshSaver &meshSaver
+               , const TextureSaver &textureSaver);
 
     typedef std::function<void(SceneLayerInfo&)> SceneLayerInfoCallback;
 

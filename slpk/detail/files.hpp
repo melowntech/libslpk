@@ -39,6 +39,8 @@ namespace constants {
     const std::string SceneLayer("3dSceneLayer.json");
     const std::string NodeIndex("3dNodeIndexDocument.json");
     const std::string SharedResource("sharedResource.json");
+    const boost::filesystem::path Nodes("nodes");
+    const boost::filesystem::path Shared("shared");
 
     namespace ext {
         const boost::filesystem::path gz(".gz");

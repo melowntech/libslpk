@@ -646,9 +646,10 @@ std::size_t byteCount(const GeometryAttribute &ga)
 
 struct Header {
     std::size_t vertexCount;
+    std::size_t faceCount;
     std::size_t featureCount;
 
-    Header() : vertexCount(), featureCount() {}
+    Header() : vertexCount(), faceCount(), featureCount() {}
 };
 
 Header loadHeader(std::istream &in, const HeaderAttribute::list &has)
@@ -658,6 +659,8 @@ Header loadHeader(std::istream &in, const HeaderAttribute::list &has)
     for (const auto &ha : has) {
         if (ha.property == "vertexCount") {
             read(in, ha.type, h.vertexCount);
+        } else if (ha.property == "faceCount") {
+            read(in, ha.type, h.faceCount);
         } else if (ha.property == "featureCount") {
             read(in, ha.type, h.featureCount);
         } else {
@@ -728,6 +731,27 @@ public:
             LOGTHROW(err1, std::runtime_error)
                 << "No vertex coordinates defined.";
         }
+
+#if 0
+        // do we need features?
+        for (const auto &fa : schema.featureAttributes) {
+            if (fa.key == "id") {
+                for (std::size_t i(0); i < header_.featureCount; ++i) {
+                    LOG(info4)
+                        << "id: " << read<std::size_t>(in_, fa.valueType);
+                }
+            } else if (fa.key == "faceRange") {
+                for (std::size_t i(0); i < header_.featureCount; ++i) {
+                    auto rmin(read<std::size_t>(in_, fa.valueType));
+                    auto rmax(read<std::size_t>(in_, fa.valueType));
+                    LOG(info4)
+                        << "range: " << rmin << ", " << rmax;
+                }
+            } else {
+                ignore(fa);
+            }
+        }
+#endif
 
         // finalize lod
         finalize();

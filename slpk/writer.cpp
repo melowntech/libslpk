@@ -48,6 +48,7 @@
 #include "utility/uri.hpp"
 #include "utility/binaryio.hpp"
 #include "utility/format.hpp"
+#include "utility/stl-helpers.hpp"
 
 #include "imgproc/readimage.hpp"
 
@@ -101,11 +102,23 @@ void build(Json::Value &value, const ResourcePatterns &resourcepatterns)
 void build(Json::Value &value, const SpatialReference &srs)
 {
     value = Json::objectValue;
-    if (srs.wkid) { value["wkid"] = srs.wkid; }
-    if (srs.latestWkid) { value["vcsWkid"] = srs.vcsWkid; }
-    if (srs.vcsWkid) { value["vcsWkid"] = srs.vcsWkid; }
+    if (srs.wkid) {
+        value["wkid"] = srs.wkid;
+        if (!srs.latestWkid) { value["latestWkid"] = srs.wkid; }
+    }
+    if (srs.latestWkid) { value["latestWkid"] = srs.latestWkid; }
+
+    if (srs.vcsWkid) {
+        value["vcsWkid"] = srs.vcsWkid;
+        if (!srs.latestVcsWkid) { value["latestVcsWkid"] = srs.vcsWkid; }
+    }
     if (srs.latestVcsWkid) { value["latestVcsWkid"] = srs.latestVcsWkid; }
-    if (!srs.wkt.empty()) { value["wkt"] = srs.wkt; }
+
+    if (!srs.wkt.empty()) {
+        value["wkt"] = srs.wkt;
+    } else if (srs.wkid) {
+        value["wkt"] = srs.srs().as(geo::SrsDefinition::Type::wkt).srs;
+    }
 }
 
 void build(Json::Value &value, const HeightModelInfo &hmi)
@@ -217,7 +230,7 @@ void build(Json::Value &value, const Store &store, const Metadata &metadata)
 
     value["rootNode"] = store.rootNode;
     value["version"] = store.version;
-    build(value["extents"], store.extents);
+    build(value["extent"], store.extents);
 
     value["normalReferenceFrame"] = asString(store.normalReferenceFrame);
 
@@ -246,8 +259,11 @@ void build(Json::Value &value, const Store &store, const Metadata &metadata)
     if (store.defaultGeometrySchema) {
         build(value["defaultGeometrySchema"], *store.defaultGeometrySchema);
     }
+}
 
-    // TODO: fill me in pls, thx
+void build(Json::Value &value, const Version &version)
+{
+    value = utility::format("%d.%d", version.major, version.minor);
 }
 
 void build(Json::Value &value, const SceneLayerInfo &sli
@@ -273,14 +289,10 @@ void build(Json::Value &value, const SceneLayerInfo &sli
         build(store, *sli.store, metadata);
         auto crs(str(boost::format("http://www.opengis.net/def/crs/EPSG/0/%d")
                      % sli.spatialReference.wkid));
-        value["indexCRS"] = crs;
-        value["vertexCRS"] = crs;
+        store["indexCRS"] = crs;
+        store["vertexCRS"] = crs;
+        build(store["version"], metadata.version);
     }
-}
-
-void build(Json::Value &value, const Version &version)
-{
-    value = str(boost::format("%d.%d") % version.major % version.minor);
 }
 
 void build(Json::Value &value, const Metadata &metadata)
@@ -310,8 +322,12 @@ void build(Json::Value &value, const NodeReference &nodeReference)
     value["id"] = nodeReference.id;
     build(value["mbs"], nodeReference.mbs);
     value["href"] = nodeReference.href;
-    value["version"] = nodeReference.version;
-    value["featureCount"] = nodeReference.featureCount;
+    if (!nodeReference.version.empty()) {
+        value["version"] = nodeReference.version;
+    }
+    if (nodeReference.featureCount) {
+        value["featureCount"] = nodeReference.featureCount;
+    }
 }
 
 void build(Json::Value &value, const Resource &resource)
@@ -331,21 +347,24 @@ void build(Json::Value &value, const LodSelection &lodSelection)
     if (lodSelection.maxError) { value["maxError"] = lodSelection.maxError; }
 }
 
-void build(Json::Value &value, const Node &node)
+void build(Json::Value &value, const Node &node
+           , bool standardSharedResource = false)
 {
     value = Json::objectValue;
     value["id"] = node.id;
     value["level"] = node.level;
-    value["version"] = node.version;
+    if (!node.version.empty()) { value["version"] = node.version; }
     build(value["mbs"], node.mbs);
 
     if (node.parentNode) { build(value["parentNode"], *node.parentNode); }
 
-    build(value["children"], node.children);
-    build(value["neighbors"], node.neighbors);
+    if (!node.children.empty()) { build(value["children"], node.children); }
+    if (!node.neighbors.empty()) { build(value["neighbors"], node.neighbors); }
 
     if (node.sharedResource) {
         build(value["sharedResource"], *node.sharedResource);
+    } else if (standardSharedResource) {
+        build(value["sharedResource"], Resource("./shared"));
     }
 
     if (!node.featureData.empty()) {
@@ -360,6 +379,96 @@ void build(Json::Value &value, const Node &node)
 
     if (!node.lodSelection.empty()) {
         build(value["lodSelection"], node.lodSelection);
+    }
+}
+
+void build(Json::Value &value, const Color &color)
+{
+    value = Json::arrayValue;
+
+    value.append(color[0]);
+    value.append(color[1]);
+    value.append(color[2]);
+}
+
+void build(Json::Value &value, const Material &material)
+{
+    value = Json::objectValue;
+
+    value["name"] = material.name;
+    value["type"] = asString(material.type);
+    if (!material.ref.empty()) { value["$ref"] = material.ref; }
+
+    auto &params(value["params"] = Json::objectValue);
+    params["vertexRegions"] = material.params.vertexRegions;
+    params["vertexColors"] = material.params.vertexColors;
+    params["useVertexColorAlpha"] = material.params.useVertexColorAlpha;
+    params["transparency"] = material.params.transparency;
+    params["reflectivity"] = material.params.reflectivity;
+    params["shininess"] = material.params.shininess;
+    build(params["ambient"], material.params.ambient);
+    build(params["difuse"], material.params.difuse);
+    build(params["specular"], material.params.specular);
+    params["renderMode"] = asString(material.params.renderMode);
+    params["castShadows"] = material.params.castShadows;
+    params["receiveShadows"] = material.params.receiveShadows;
+    params["cullFace"] = asString(material.params.cullFace);
+}
+
+void build(Json::Value &value, const Image &image)
+{
+    value = Json::objectValue;
+
+    value["id"] = image.id;
+    value["size"] = Json::UInt64(image.size);
+    value["pixelInWorldUnits"] = image.pixelInWorldUnits;
+
+    auto &href(value["href"] = Json::arrayValue);
+    auto &byteOffset(value["byteOffset"] = Json::arrayValue);
+    auto &length(value["length"] = Json::arrayValue);
+
+    for (const auto &version : image.versions) {
+        href.append(version.href);
+        byteOffset.append(Json::UInt64(version.byteOffset));
+        length.append(Json::UInt64(version.length));
+    }
+}
+
+void build(Json::Value &value, const Texture &texture)
+{
+    value = Json::objectValue;
+
+    auto &encoding(value["encoding"] = Json::arrayValue);
+    for (const auto &e : texture.encoding) { encoding.append(e.mime); }
+
+    auto &wrap(value["wrap"] = Json::arrayValue);
+    wrap.append(asString(texture.wrap[0]));
+    wrap.append(asString(texture.wrap[1]));
+
+    value["atlas"] = texture.atlas;
+    value["uvSet"] = texture.uvSet;
+    value["channels"] = texture.channels;
+
+    auto &images(value["images"] = Json::arrayValue);
+    for (const auto &image : texture.images) {
+        build(images.append({}), image);
+    }
+}
+
+void build(Json::Value &value, const SharedResource &sr)
+{
+    if (!sr.materialDefinitions.empty()) {
+        auto &md(value["materialDefinitions"] = Json::objectValue);
+        for (const auto &materialDefinition : sr.materialDefinitions) {
+            build(md[materialDefinition.key], materialDefinition);
+        }
+    }
+
+    if (!sr.textureDefinitions.empty()) {
+        auto &md(value["textureDefinitions"] = Json::objectValue);
+        for (const auto &textureDefinition : sr.textureDefinitions) {
+            build(md[textureDefinition.key], textureDefinition);
+        }
     }
 }
 
@@ -434,6 +543,9 @@ public:
             if (header.property == "vertexCount") {
                 // vertex count = 3 x face count
                 write(os, header.type, properties_.faceCount * 3);
+            } else if (header.property == "featureCount") {
+                // feature count: whole mesh is a single feature
+                write(os, header.type, 1);
             } else {
                 LOGTHROW(err2, std::runtime_error)
                     << "Header element <" << header.property
@@ -441,7 +553,7 @@ public:
             }
         }
 
-        // save data
+        // save mesh data
         for (const auto &ga : gs_.vertexAttributes) {
             if (ga.key == "position") {
                 saveFaces(ga);
@@ -450,6 +562,34 @@ public:
             } else {
                 LOGTHROW(err2, std::runtime_error)
                     << "Geometry attribute <" << ga.key << "> not supported.";
+            }
+        }
+
+        // save features
+        for (const auto &fa : gs_.featureAttributes) {
+            if (fa.key == "id") {
+                if (fa.valuesPerElement != 1) {
+                    LOGTHROW(err1, std::runtime_error)
+                        << "Number of feaure.id elements must be 1 not "
+                        << fa.valuesPerElement << ".";
+                }
+
+                // ID = 0
+                write(os, fa.valueType, 0);
+
+            } else if (fa.key == "faceRange") {
+                if (fa.valuesPerElement != 2) {
+                    LOGTHROW(err1, std::runtime_error)
+                        << "Number of feaure.faceRanage  elements must be "
+                        "2 not " << fa.valuesPerElement << ".";
+                }
+
+                // whole mesh
+                write(os, fa.valueType, 0);
+                write(os, fa.valueType, properties_.faceCount);
+            } else {
+                LOGTHROW(err2, std::runtime_error)
+                    << "Feature attribute <" << fa.key << "> not supported.";
             }
         }
     }
@@ -534,7 +674,7 @@ struct Writer::Detail {
            , const Metadata &metadata, const SceneLayerInfo &sli
            , bool overwrite)
         : sli(sli), gs(getGeometrySchema(this->sli)), zip(path, overwrite)
-        , metadata(metadata)
+        , metadata(metadata), nodeCount(), textureCount()
     {
 
     }
@@ -542,27 +682,28 @@ struct Writer::Detail {
     void flush(const SceneLayerInfoCallback &callback) {
         // update and store scene layer
         if (callback) { callback(sli); }
-        store(std::make_tuple(sli, metadata), detail::constants::SceneLayer);
+        store(std::make_tuple(std::cref(sli), std::cref(metadata))
+              , detail::constants::SceneLayer);
 
         // update and save metadata
         metadata.nodeCount = nodeCount;
-        store(metadata, detail::constants::MetadataName);
+        store(metadata, detail::constants::MetadataName, true);
 
         // done
         zip.close();
     }
 
     utility::zip::Writer::OStream::pointer
-    ostream(const fs::path &path, bool image = false)
+    ostream(const fs::path &path, bool raw = false)
     {
         const utility::zip::Compression compression
-            ((!image && (metadata.archiveCompressionType
-                         != ArchiveCompressionType::store))
+            ((!raw && (metadata.archiveCompressionType
+                       != ArchiveCompressionType::store))
              ? utility::zip::Compression::deflate
              : utility::zip::Compression::store);
 
-        if (!image && (metadata.resourceCompressionType
-                       == ResourceCompressionType::gzip))
+        if (!raw && (metadata.resourceCompressionType
+                     == ResourceCompressionType::gzip))
         {
             // add .gz extension and push gzip compressor at the top of this
             // filter stack
@@ -580,21 +721,21 @@ struct Writer::Detail {
     }
 
     template <typename T>
-    void store(const T &value, const fs::path &path
-               , bool image = false)
+    void store(const T &value, const fs::path &path, bool raw = false)
     {
         Json::Value jValue;
         build(jValue, value);
 
         std::unique_lock<std::mutex> lock(mutex);
-        auto os(ostream( path, image));
+        auto os(ostream( path, raw));
         // Json::write(os->get(), jValue, false);
         Json::write(os->get(), jValue, true);
         os->close();
     }
 
-    void write(Node &node, const TextureSaver &textureSaver
-               , const MeshSaver &meshSaver);
+    void write(Node &node, Texture::list &textures
+               , const MeshSaver &meshSaver
+               , const TextureSaver &textureSaver);
 
     SceneLayerInfo sli;
     const GeometrySchema &gs;
@@ -603,34 +744,71 @@ struct Writer::Detail {
     Metadata metadata;
 
     std::atomic<std::size_t> nodeCount;
+    std::atomic<std::size_t> textureCount;
 };
 
-void Writer::Detail::write(Node &node, const TextureSaver &textureSaver
-                           , const MeshSaver &meshSaver)
+std::uint64_t buildId(std::uint64_t id, const math::Size2 &size
+                      , unsigned int l, unsigned int al)
 {
+    std::uint64_t l_al(std::uint64_t(al) << 60);
+    std::uint64_t l_l(std::uint64_t(l) << 56);
+    std::uint64_t l_w (std::uint64_t(size.width - 1) << 44);
+    std::uint64_t l_h(std::uint64_t(size.height - 1) << 32);
+    return  l_al + l_l + l_w + l_h + std::uint64_t(id);
+}
+
+void Writer::Detail::write(Node &node, Texture::list &textures
+                           , const MeshSaver &meshSaver
+                           , const TextureSaver &textureSaver)
+{
+    // add texture
+    auto textureId(textures.size());
+    textures.emplace_back(utility::format("tex%d", textureId));
+    auto &texture(textures.back());
+
+    // setup texture
+    texture.atlas = true;
+    texture.uvSet = utility::format("uv%d", textureId);
+    texture.channels = "rgb";
+
+    auto &image(utility::append(texture.images));
+    const auto imageSize(textureSaver.imageSize());
+    image.size = imageSize.width;
+
+    // TODO: what are these levels?
+    image.id = asString(buildId(textureCount++, imageSize, 0, 0));
+
     const auto index(node.geometryData.size());
 
     // write textures
     int txi(0);
     for (const auto &encoding : sli.store->textureEncoding) {
+        // node
         const auto href
             (utility::format("textures/%d_%d", index, txi++));
         node.textureData.emplace_back("./" + href);
+        // texture
+        texture.encoding.push_back(encoding);
+
+        auto &imageVersion(utility::append(image.versions, "../" + href));
+
         const fs::path texturePath
-            (fs::path("nodes") / node.id / (href + ".bin"));
+            (detail::constants::Nodes / node.id / (href + ".bin"));
 
         std::unique_lock<std::mutex> lock(mutex);
-        // TODO: do not report DDS as image (if ever used)
+        // TODO: do not report DDS as raw (if ever used)
         auto os(ostream(texturePath, true));
         textureSaver.save(os->get(), encoding.mime);
-        os->close();
+
+        const auto stat(os->close());
+        imageVersion.length = stat.uncompressedSize;
     }
 
     // write meshes
     const auto href(utility::format("geometries/%d", index));
     node.geometryData.emplace_back("./" + href);
     const fs::path geometryPath
-        (fs::path("nodes") / node.id / (href + ".bin"));
+        (detail::constants::Nodes / node.id / (href + ".bin"));
 
     // TODO: write without lock to temporary stream
     {
@@ -648,18 +826,24 @@ Writer::Writer(const boost::filesystem::path &path
     : detail_(std::make_shared<Detail>(path, metadata, sli, overwrite))
 {}
 
-void Writer::write(const Node &node)
+void Writer::write(const Node &node, const SharedResource *sharedResource)
 {
-    detail_->store(node, (fs::path("nodes")
-                          / node.id
-                          / detail::constants::NodeIndex));
+    const auto dir(detail::constants::Nodes / node.id);
+    detail_->store(std::make_tuple(std::cref(node), bool(sharedResource))
+                   , dir / detail::constants::NodeIndex);
+    if (sharedResource) {
+        detail_->store(*sharedResource
+                       , (dir / detail::constants::Shared
+                          / detail::constants::SharedResource));
+    }
     ++detail_->nodeCount;
 }
 
-void Writer::write(Node &node, const TextureSaver &textureSaver
-                   , const MeshSaver &meshSaver)
+void Writer::write(Node &node, Texture::list &textures
+                   , const MeshSaver &meshSaver
+                   , const TextureSaver &textureSaver)
 {
-    detail_->write(node, textureSaver, meshSaver);
+    detail_->write(node, textures, meshSaver, textureSaver);
 }
 
 void Writer::flush(const SceneLayerInfoCallback &callback)

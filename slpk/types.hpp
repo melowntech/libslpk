@@ -299,7 +299,7 @@ struct Encoding {
 
     Encoding() : preference(0) {}
 
-    Encoding(const std::string &mime) : mime(mime), ext(ext) {}
+    Encoding(const std::string &mime) : mime(mime) {}
 };
 
 struct PreferredEncoding {
@@ -521,6 +521,121 @@ struct Tree {
         if (fnodes == nodes.end()) { return nullptr; }
         return &fnodes->second;
     }
+};
+
+UTILITY_GENERATE_ENUM_CI(MaterialType,
+                         ((standard))
+                         ((water))
+                         ((billboard))
+                         ((leafcard))
+                         ((reference))
+                         )
+
+UTILITY_GENERATE_ENUM_CI(RenderMode,
+                         ((textured))
+                         ((solid))
+                         ((untextured))
+                         ((wireframe))
+                         )
+
+UTILITY_GENERATE_ENUM_CI(CullFace,
+                         ((none))
+                         ((front))
+                         ((back))
+                         )
+
+UTILITY_GENERATE_ENUM_CI(Wrap,
+                         ((none))
+                         ((repeat))
+                         ((mirror))
+                         )
+
+typedef std::array<double, 3> Color;
+
+struct Material {
+    typedef std::vector<Material> list;
+    std::string key; // key in serialized object
+
+    std::string name;
+    MaterialType type;
+    std::string ref;
+
+    struct Params {
+        bool vertexRegions;
+        bool vertexColors;
+        bool useVertexColorAlpha;
+        double transparency;
+        double reflectivity;
+        double shininess;
+        Color ambient;
+        Color difuse;
+        Color specular;
+        RenderMode renderMode;
+        bool castShadows;
+        bool receiveShadows;
+        CullFace cullFace;
+
+        Params()
+            : vertexRegions(), vertexColors(), useVertexColorAlpha()
+            , transparency(), reflectivity(), shininess()
+            , ambient{{ 0.0, 0.0, 0.0 }}
+            , difuse{{ 1.0, 1.0, 1.0 }}
+            , specular{{ 0.0, 0.0, 0.0 }}
+            , renderMode(RenderMode::textured)
+            , castShadows(), receiveShadows()
+            , cullFace(CullFace::none)
+        {}
+    };
+
+    Params params;
+
+    Material(const std::string &key)
+        : key(key), type(MaterialType::standard)
+    {}
+};
+
+struct Image {
+    std::string id;
+    std::size_t size;
+    double pixelInWorldUnits;
+
+    struct Version {
+        typedef std::vector<Version> list;
+
+        std::string href;
+        std::size_t byteOffset;
+        std::size_t length;
+
+        Version(std::string href)
+            : href(std::move(href)), byteOffset(), length() {}
+    };
+
+    Version::list versions;
+
+    Image() : size(), pixelInWorldUnits() {}
+    typedef std::vector<Image> list;
+};
+
+struct Texture {
+    std::string key; // key in serialized object
+    typedef std::vector<Texture> list;
+
+    Encoding::list encoding;
+    std::array<Wrap, 2> wrap;
+    bool atlas;
+    std::string uvSet;
+    std::string channels;
+
+    Image::list images;
+
+    Texture(const std::string &key)
+        : key(key), wrap{{ Wrap::none, Wrap::none }}, atlas(false)
+    {}
+};
+
+struct SharedResource {
+    Material::list materialDefinitions;
+    Texture::list textureDefinitions;
 };
 
 /** Expanded node info.
