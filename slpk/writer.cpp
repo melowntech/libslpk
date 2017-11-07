@@ -933,8 +933,12 @@ void Writer::Detail::write(Node &node, SharedResource &sharedResource
 
     auto &textures(sharedResource.textureDefinitions);
 
+    if (!textures.empty()) {
+        LOGTHROW(err2, std::runtime_error)
+            << "Multi texture bundle not supported.";
+    }
+
     const auto txId(textureCount++);
-    auto txIdLocal(textures.size());
 
     // add texture
     textures.emplace_back(utility::format("tex%d", txId));
@@ -942,7 +946,7 @@ void Writer::Detail::write(Node &node, SharedResource &sharedResource
 
     // setup texture
     texture.atlas = true;
-    texture.uvSet = utility::format("uv%d", txIdLocal);
+    texture.uvSet = "uv0";
     texture.channels = "rgb";
 
     auto &image(utility::append(texture.images));
@@ -959,8 +963,10 @@ void Writer::Detail::write(Node &node, SharedResource &sharedResource
     for (const auto &encoding : sli.store->textureEncoding) {
         // node
         const auto href
-            (utility::format("textures/%d_%d", index, txi++));
-        node.textureData.emplace_back("./" + href);
+            (utility::format("textures/0_%d", txi++));
+        auto &td(utility::append(node.textureData, "./" + href));
+        td.multiTextureBundle = false;
+
         // texture
         texture.encoding.push_back(encoding);
 
