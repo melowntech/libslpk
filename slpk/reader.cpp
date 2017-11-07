@@ -433,9 +433,9 @@ loadSceneLayerInfo(const roarchive::IStream::pointer &in)
 void parse(MinimumBoundingSphere &mbs, const Json::Value &value
            , const char *name)
 {
-    Json::get(mbs.x, value, 0, name);
-    Json::get(mbs.y, value, 1, name);
-    Json::get(mbs.z, value, 2, name);
+    Json::get(mbs.center(0), value, 0, name);
+    Json::get(mbs.center(1), value, 1, name);
+    Json::get(mbs.center(2), value, 2, name);
     Json::get(mbs.r, value, 3, name);
 }
 
@@ -784,9 +784,9 @@ protected:
 
     int vertex(const GeometryAttribute &ga) {
         math::Point3d point;
-        read(in_, ga.valueType, point(0)); point(0) += node_.mbs.x;
-        read(in_, ga.valueType, point(1)); point(1) += node_.mbs.y;
-        read(in_, ga.valueType, point(2)); point(2) += node_.mbs.z;
+        read(in_, ga.valueType, point(0)); point(0) += node_.mbs.center(0);
+        read(in_, ga.valueType, point(1)); point(1) += node_.mbs.center(1);
+        read(in_, ga.valueType, point(2)); point(2) += node_.mbs.center(2);
         return add(vertices_, &MeshLoader::addVertex, point);
     }
 

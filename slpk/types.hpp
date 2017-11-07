@@ -48,6 +48,8 @@
 
 #include "utility/enum-io.hpp"
 
+#include "math/geometry_core.hpp"
+
 #include "geo/srsdef.hpp"
 
 #include "roarchive/roarchive.hpp"
@@ -199,6 +201,13 @@ struct IndexScheme {
     {}
 };
 
+UTILITY_GENERATE_ENUM_CI(GeometryClass,
+                         ((ArrayBufferView))
+                         ((GeometryReference))
+                         ((SharedResourceReference))
+                         ((Embedded))
+                         )
+
 UTILITY_GENERATE_ENUM_CI(GeometryType,
                          ((triangles))
                          ((lines))
@@ -276,6 +285,8 @@ struct GeometrySchema {
         : geometryType(GeometryType::triangles)
         , topology(Topology::perAttributeArray)
     {}
+
+    typedef std::vector<GeometrySchema> list;
 };
 
 typedef std::function<math::Size2
@@ -391,12 +402,10 @@ struct SceneLayerInfo {
 };
 
 struct MinimumBoundingSphere {
-    double x;
-    double y;
-    double z;
+    math::Point3 center;
     double r;
 
-    MinimumBoundingSphere() : x(), y(), z(), r() {}
+    MinimumBoundingSphere() : r() {}
 };
 
 struct NodeReference {
@@ -636,6 +645,60 @@ struct Texture {
 struct SharedResource {
     Material::list materialDefinitions;
     Texture::list textureDefinitions;
+};
+
+/** Geometry reference
+ */
+struct GeometryReference {
+    std::string ref;
+    FeatureRange faceRange;
+    bool lodGeometry;
+
+    GeometryReference() : lodGeometry(false) {}
+
+    typedef std::vector<GeometryReference> list;
+};
+
+/** Array buffer view geometry type.
+ */
+struct ArrayBufferView {
+    int id;
+    math::Matrix4 transformation;
+
+    GeometryType type;
+    Topology topology;
+    std::string material;
+    std::string texture;
+    GeometryAttribute::list vertexAttributes;
+    GeometryAttribute::list faces;
+
+    ArrayBufferView(int id = 0)
+        : id(id)
+        , transformation(boost::numeric::ublas::identity_matrix<double>(4))
+        , type(), topology()
+    {}
+    typedef std::vector<ArrayBufferView> list;
+};
+
+/** Simpliefied FeatureData file content. Only for file generation.
+ */
+struct FeatureData {
+    /** Feature, only usable for referenced geometries.
+     */
+    struct Feature {
+        int id;
+        math::Point3 position;
+        math::Point3 pivotOffset;
+        math::Extents3 mbb;
+        std::string layer;
+        GeometryReference::list geometries;
+
+        Feature(int id = 0) : id(id) {}
+        typedef std::vector<Feature> list;
+    };
+
+    Feature::list featureData;
+    ArrayBufferView::list geometryData;
 };
 
 /** Expanded node info.

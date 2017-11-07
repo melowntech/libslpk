@@ -81,9 +81,12 @@ public:
     void write(const Node &node
                , const SharedResource *sharedResource = nullptr);
 
-    /** Write mesh and texture(s). Update node.
+    /** Write a textured mesh: mesh, all texture verions and feature data.
+     *
+     * Updates sharedResource.textureDefinitions and node. Uses last material
+     * from sharedResource.materialDefinitions.
      */
-    void write(Node &node, Texture::list &textures
+    void write(Node &node, SharedResource &sharedResource
                , const MeshSaver &meshSaver
                , const TextureSaver &textureSaver);
 

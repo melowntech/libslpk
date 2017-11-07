@@ -129,6 +129,21 @@ void build(Json::Value &value, const HeightModelInfo &hmi)
     value["heightUnit"] = hmi.heightUnit;
 }
 
+void build(Json::Value &value, const FeatureRange &range)
+{
+    value = Json::arrayValue;
+    value.append(range.min);
+    value.append(range.max);
+}
+
+void build(Json::Value &value, const math::Point3 &p)
+{
+    value = Json::arrayValue;
+    value.append(p(0));
+    value.append(p(1));
+    value.append(p(2));
+}
+
 void build(Json::Value &value, const math::Extents2 &extents)
 {
     value = Json::arrayValue;
@@ -136,6 +151,27 @@ void build(Json::Value &value, const math::Extents2 &extents)
     value.append(extents.ll(1));
     value.append(extents.ur(0));
     value.append(extents.ur(1));
+}
+
+void build(Json::Value &value, const math::Extents3 &extents)
+{
+    value = Json::arrayValue;
+    value.append(extents.ll(0));
+    value.append(extents.ll(1));
+    value.append(extents.ll(2));
+    value.append(extents.ur(0));
+    value.append(extents.ur(1));
+    value.append(extents.ur(2));
+}
+
+void build(Json::Value &value, const math::Matrix4 &m)
+{
+    value = Json::arrayValue;
+    for (int j(0); j < 4; ++j) {
+        for (int i(0); i < 4; ++i) {
+            value.append(m(j, i));
+        }
+    }
 }
 
 void build(Json::Value &value, const Encoding &encoding)
@@ -196,6 +232,14 @@ void build(Json::Value &jattrs, Json::Value &jordering
     for (const auto &attr : attrs) {
         build(jattrs[attr.key], attr);
         jordering.append(attr.key);
+    }
+}
+
+void build(Json::Value &value, const GeometryAttribute::list &attrs)
+{
+    value = Json::objectValue;
+    for (const auto &attr : attrs) {
+        build(value[attr.key], attr);
     }
 }
 
@@ -310,9 +354,9 @@ void build(Json::Value &value, const Metadata &metadata)
 void build(Json::Value &value, const MinimumBoundingSphere &mbs)
 {
     value = Json::arrayValue;
-    value.append(mbs.x);
-    value.append(mbs.y);
-    value.append(mbs.z);
+    value.append(mbs.center(0));
+    value.append(mbs.center(1));
+    value.append(mbs.center(2));
     value.append(mbs.r);
 }
 
@@ -472,6 +516,83 @@ void build(Json::Value &value, const SharedResource &sr)
     }
 }
 
+void build(Json::Value &value, const GeometryReference &geometry)
+{
+    value = Json::objectValue;
+    value["type"] = asString(GeometryClass::GeometryReference);
+
+    value["$ref"] = geometry.ref;
+    build(value["faceRange"], geometry.faceRange);
+    value["lodGeometry"] = geometry.lodGeometry;
+}
+
+void build(Json::Value &value, GeometryReference::list &geometries)
+{
+    value = Json::arrayValue;
+    for (const auto geometry : geometries) {
+        build(value.append({}), geometry);
+    }
+}
+
+void build(Json::Value &value, const FeatureData::Feature &feature)
+{
+    value = Json::objectValue;
+
+    value["id"] = feature.id;
+    build(value["position"], feature.position);
+    build(value["pivotOffset"], feature.pivotOffset);
+    build(value["mbb"], feature.mbb);
+    value["layer"] = feature.layer;
+
+    build(value["geometries"], feature.geometries);
+}
+
+void build(Json::Value &value, const ArrayBufferView &geometry)
+{
+    value = Json::objectValue;
+    value["type"] = asString(GeometryClass::ArrayBufferView);
+
+    value["id"] = geometry.id;
+    build(value["transformation"], geometry.transformation);
+
+    auto &params(value["params"]);
+    params["type"] = asString(geometry.type);
+    params["topology"] = asString(geometry.topology);
+    params["material"] = geometry.material;
+    params["texture"] = geometry.texture;
+
+    if (!geometry.vertexAttributes.empty()) {
+        build(params["vertexAttributes"], geometry.vertexAttributes);
+    }
+    if (!geometry.faces.empty()) {
+        build(params["faces"], geometry.faces);
+    }
+}
+
+void build(Json::Value &value, const FeatureData::Feature::list &features)
+{
+    value = Json::arrayValue;
+    for (const auto feature : features) {
+        build(value.append({}), feature);
+    }
+}
+
+void build(Json::Value &value, const ArrayBufferView::list &geometries)
+{
+    value = Json::arrayValue;
+    for (const auto geometry : geometries) {
+        build(value.append({}), geometry);
+    }
+}
+
+void build(Json::Value &value, const FeatureData &fd)
+{
+    value = Json::objectValue;
+
+    build(value["featureData"], fd.featureData);
+    build(value["geometryData"], fd.geometryData);
+}
+
 // implementation must be here to see other build functions
 template <typename T>
 void build(Json::Value &value, const std::vector<T> &array)
@@ -533,16 +654,25 @@ void write(std::ostream &out, const GeometryAttribute &ga
 
 class SavePerAttributeArray {
 public:
-    SavePerAttributeArray(std::ostream &os, const MeshSaver &meshSaver
-                          , const GeometrySchema &gs)
-        : os_(os), meshSaver_(meshSaver), gs_(gs)
+    SavePerAttributeArray(std::ostream &os, const Node &node
+                          , const MeshSaver &meshSaver
+                          , const GeometrySchema &gs
+                          , FeatureData::Feature &feature
+                          , ArrayBufferView &arrayBufferView)
+        : os_(os), node_(node), meshSaver_(meshSaver), gs_(gs)
+        , feature_(feature), arrayBufferView_(arrayBufferView)
         , properties_(meshSaver_.properties())
+        , vertexCount_(3 * properties_.faceCount)
     {
+        // store array buffer view info
+        arrayBufferView_.type = gs.geometryType;
+        arrayBufferView_.topology = gs.topology;
+
         // save header
         for (const auto &header : gs_.header) {
             if (header.property == "vertexCount") {
-                // vertex count = 3 x face count
-                write(os, header.type, properties_.faceCount * 3);
+                // vertex count
+                write(os, header.type, vertexCount_);
             } else if (header.property == "featureCount") {
                 // feature count: whole mesh is a single feature
                 write(os, header.type, 1);
@@ -556,8 +686,16 @@ public:
         // save mesh data
         for (const auto &ga : gs_.vertexAttributes) {
             if (ga.key == "position") {
+                auto &oga(utility::append
+                          (arrayBufferView_.vertexAttributes, ga));
+                oga.byteOffset = os.tellp();
+                oga.count = vertexCount_;
                 saveFaces(ga);
             } else if (ga.key == "uv0") {
+                auto &oga(utility::append
+                          (arrayBufferView_.vertexAttributes, ga));
+                oga.byteOffset = os.tellp();
+                oga.count = vertexCount_;
                 saveFacesTc(ga);
             } else {
                 LOGTHROW(err2, std::runtime_error)
@@ -584,14 +722,20 @@ public:
                         "2 not " << fa.valuesPerElement << ".";
                 }
 
-                // whole mesh
+                // whole mesh; doc says inclusive range -> faceCount - 1
                 write(os, fa.valueType, 0);
-                write(os, fa.valueType, properties_.faceCount);
+                write(os, fa.valueType, (properties_.faceCount - 1));
             } else {
                 LOGTHROW(err2, std::runtime_error)
                     << "Feature attribute <" << fa.key << "> not supported.";
             }
         }
+
+        auto &geometry(utility::append(feature_.geometries));
+        geometry.ref = "/geometryData/1";
+        geometry.faceRange.min = 0;
+        geometry.faceRange.max = (properties_.faceCount - 1);
+        geometry.lodGeometry = true;
     }
 
 private:
@@ -602,10 +746,14 @@ private:
                 << ga.valuesPerElement << ".";
         }
 
+        feature_.mbb = math::Extents3(math::InvalidExtents{});
         for (std::size_t i(0), e(properties_.faceCount); i != e; ++i) {
             const auto &face(meshSaver_.face(i));
             for (const auto &point : face) {
-                write(os_, ga, point);
+                // update mesh extents
+                math::update(feature_.mbb, point);
+                // write localized point
+                write(os_, ga, math::Point3(point - node_.mbs.center));
             }
         }
     }
@@ -626,23 +774,34 @@ private:
     }
 
     std::ostream &os_;
+    const Node &node_;
     const MeshSaver &meshSaver_;
     const GeometrySchema &gs_;
+    FeatureData::Feature &feature_;
+    ArrayBufferView &arrayBufferView_;
+
     const MeshSaver::Properties properties_;
+
+    std::size_t vertexCount_;
 };
 
-void saveMesh(std::ostream &os, const MeshSaver &meshSaver
-              , const GeometrySchema &gs)
+void saveMesh(std::ostream &os, const Node &node
+              , const MeshSaver &meshSaver
+              , const GeometrySchema &gs
+              , FeatureData::Feature &feature
+              , ArrayBufferView &arrayBufferView)
 {
     switch (gs.topology) {
     case Topology::perAttributeArray:
-        SavePerAttributeArray(os, meshSaver, gs);
+        SavePerAttributeArray(os, node, meshSaver, gs
+                              , feature, arrayBufferView);
         return;
 
     default:
         LOGTHROW(err2, std::runtime_error)
             << "Unsupported geomety topology " << gs.topology << ".";
     }
+    throw;
 }
 
 const GeometrySchema& getGeometrySchema(const SceneLayerInfo &sli)
@@ -675,67 +834,19 @@ struct Writer::Detail {
            , bool overwrite)
         : sli(sli), gs(getGeometrySchema(this->sli)), zip(path, overwrite)
         , metadata(metadata), nodeCount(), textureCount()
-    {
+    {}
 
-    }
-
-    void flush(const SceneLayerInfoCallback &callback) {
-        // update and store scene layer
-        if (callback) { callback(sli); }
-        store(std::make_tuple(std::cref(sli), std::cref(metadata))
-              , detail::constants::SceneLayer);
-
-        // update and save metadata
-        metadata.nodeCount = nodeCount;
-        store(metadata, detail::constants::MetadataName, true);
-
-        // done
-        zip.close();
-    }
+    void flush(const SceneLayerInfoCallback &callback);
 
     utility::zip::Writer::OStream::pointer
-    ostream(const fs::path &path, bool raw = false)
-    {
-        const utility::zip::Compression compression
-            ((!raw && (metadata.archiveCompressionType
-                       != ArchiveCompressionType::store))
-             ? utility::zip::Compression::deflate
-             : utility::zip::Compression::store);
+    ostream(const fs::path &path, bool raw = false);
 
-        if (!raw && (metadata.resourceCompressionType
-                     == ResourceCompressionType::gzip))
-        {
-            // add .gz extension and push gzip compressor at the top of this
-            // filter stack
-            return zip.ostream(utility::addExtension
-                               (path, detail::constants::ext::gz)
-                               , compression
-                               , [](bio::filtering_ostream &fos) {
-                                   bio::zlib_params p;
-                                   p.window_bits |= 16;
-                                   fos.push(bio::zlib_compressor(p));
-                               });
-        }
-
-        return zip.ostream(path, compression);
-    }
-
-    template <typename T>
-    void store(const T &value, const fs::path &path, bool raw = false)
-    {
-        Json::Value jValue;
-        build(jValue, value);
-
-        std::unique_lock<std::mutex> lock(mutex);
-        auto os(ostream( path, raw));
-        // Json::write(os->get(), jValue, false);
-        Json::write(os->get(), jValue, true);
-        os->close();
-    }
-
-    void write(Node &node, Texture::list &textures
+    void write(Node &node, SharedResource &sharedResource
                , const MeshSaver &meshSaver
                , const TextureSaver &textureSaver);
+
+    template <typename T>
+    void store(const T &value, const fs::path &path, bool raw = false);
 
     SceneLayerInfo sli;
     const GeometrySchema &gs;
@@ -747,6 +858,60 @@ struct Writer::Detail {
     std::atomic<std::size_t> textureCount;
 };
 
+template <typename T>
+void Writer::Detail::store(const T &value, const fs::path &path, bool raw)
+{
+    Json::Value jValue;
+    build(jValue, value);
+
+    std::unique_lock<std::mutex> lock(mutex);
+    auto os(ostream( path, raw));
+    // Json::write(os->get(), jValue, false);
+    Json::write(os->get(), jValue, true);
+    os->close();
+}
+
+void Writer::Detail::flush(const SceneLayerInfoCallback &callback) {
+    // update and store scene layer
+    if (callback) { callback(sli); }
+    store(std::make_tuple(std::cref(sli), std::cref(metadata))
+          , detail::constants::SceneLayer);
+
+    // update and save metadata
+    metadata.nodeCount = nodeCount;
+    store(metadata, detail::constants::MetadataName, true);
+
+        // done
+    zip.close();
+}
+
+utility::zip::Writer::OStream::pointer
+Writer::Detail::ostream(const fs::path &path, bool raw)
+{
+    const utility::zip::Compression compression
+        ((!raw && (metadata.archiveCompressionType
+                   != ArchiveCompressionType::store))
+         ? utility::zip::Compression::deflate
+         : utility::zip::Compression::store);
+
+    if (!raw && (metadata.resourceCompressionType
+                 == ResourceCompressionType::gzip))
+    {
+        // add .gz extension and push gzip compressor at the top of this
+        // filter stack
+        return zip.ostream(utility::addExtension
+                           (path, detail::constants::ext::gz)
+                           , compression
+                           , [](bio::filtering_ostream &fos) {
+                               bio::zlib_params p;
+                               p.window_bits |= 16;
+                               fos.push(bio::zlib_compressor(p));
+                           });
+    }
+
+    return zip.ostream(path, compression);
+}
+
 std::uint64_t buildId(std::uint64_t id, const math::Size2 &size
                       , unsigned int l, unsigned int al)
 {
@@ -757,10 +922,17 @@ std::uint64_t buildId(std::uint64_t id, const math::Size2 &size
     return  l_al + l_l + l_w + l_h + std::uint64_t(id);
 }
 
-void Writer::Detail::write(Node &node, Texture::list &textures
+void Writer::Detail::write(Node &node, SharedResource &sharedResource
                            , const MeshSaver &meshSaver
                            , const TextureSaver &textureSaver)
 {
+    if (sharedResource.materialDefinitions.empty()) {
+        LOGTHROW(err2, std::runtime_error)
+            << "No material defined in shared resource.";
+    }
+
+    auto &textures(sharedResource.textureDefinitions);
+
     const auto txId(textureCount++);
     auto txIdLocal(textures.size());
 
@@ -806,20 +978,47 @@ void Writer::Detail::write(Node &node, Texture::list &textures
         imageVersion.length = stat.uncompressedSize;
     }
 
-    // write meshes
-    const auto href(utility::format("geometries/%d", index));
-    node.geometryData.emplace_back("./" + href);
+    // write meshes and features
+    const auto mhref(utility::format("geometries/%d", index));
+    node.geometryData.emplace_back("./" + mhref);
     const fs::path geometryPath
-        (detail::constants::Nodes / node.id / (href + ".bin"));
+        (detail::constants::Nodes / node.id / (mhref + ".bin"));
 
-    // TODO: write without lock to temporary stream
+    const auto fhref(utility::format("features/%d", index));
+    node.featureData.emplace_back("./" + fhref);
+    const fs::path featurePath
+        (detail::constants::Nodes / node.id / (fhref + ".json"));
+
+    // save mesh to temporary stream
+    std::stringstream tmp;
+
+    // feature stuff
+    FeatureData featureData;
+    {
+        auto &fd(utility::append(featureData.featureData, 0));
+        fd.position = node.mbs.center;
+        fd.layer = "3D model";
+
+        auto &gd(utility::append(featureData.geometryData, 0));
+
+        // only per-attribute array geometry type
+        saveMesh(tmp, node, meshSaver, gs, fd, gd);
+
+        // store references to material and textures
+        gd.material = ("/materialDefinitions/"
+                       + sharedResource.materialDefinitions.back().key);
+        gd.texture = "/textureDefinitions/" + texture.key;
+    }
+
     {
         std::unique_lock<std::mutex> lock(mutex);
         auto os(ostream(geometryPath));
-        // only per-attribute array
-        saveMesh(os->get(), meshSaver, gs);
+        os->get() << tmp.rdbuf();
         os->close();
     }
+
+    // store feature data
+    store(featureData, featurePath);
 }
 
 Writer::Writer(const boost::filesystem::path &path
@@ -833,19 +1032,21 @@ void Writer::write(const Node &node, const SharedResource *sharedResource)
     const auto dir(detail::constants::Nodes / node.id);
     detail_->store(std::make_tuple(std::cref(node), bool(sharedResource))
                    , dir / detail::constants::NodeIndex);
+
     if (sharedResource) {
         detail_->store(*sharedResource
                        , (dir / detail::constants::Shared
                           / detail::constants::SharedResource));
     }
+
     ++detail_->nodeCount;
 }
 
-void Writer::write(Node &node, Texture::list &textures
+void Writer::write(Node &node, SharedResource &sharedResource
                    , const MeshSaver &meshSaver
                    , const TextureSaver &textureSaver)
 {
-    detail_->write(node, textures, meshSaver, textureSaver);
+    return detail_->write(node, sharedResource, meshSaver, textureSaver);
 }
 
 void Writer::flush(const SceneLayerInfoCallback &callback)
