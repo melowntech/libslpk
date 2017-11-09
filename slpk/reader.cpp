@@ -24,6 +24,8 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
+#include <ogr_spatialref.h>
+
 #include <map>
 #include <queue>
 #include <string>
@@ -37,6 +39,8 @@
 #include <boost/iostreams/filter/zlib.hpp>
 #include <boost/iostreams/filter/gzip.hpp>
 #include <boost/iostreams/copy.hpp>
+#include <boost/algorithm/string/predicate.hpp>
+#include <boost/algorithm/string/case_conv.hpp>
 
 #include "dbglog/dbglog.hpp"
 
@@ -57,6 +61,7 @@
 #include "./detail/files.hpp"
 
 namespace fs = boost::filesystem;
+namespace ba = boost::algorithm;
 namespace bio = boost::iostreams;
 namespace bin = utility::binaryio;
 
@@ -1521,6 +1526,43 @@ bool Archive::changed() const
 bool RestApi::changed() const
 {
     return archive_.changed();
+}
+
+HeightModelInfo::HeightModelInfo(const geo::SrsDefinition &srs)
+    : heightModel(HeightModel::ellipsoidal)
+    , ellipsoid("unnamed"), heightUnit("meter")
+{
+    const auto reference(srs.reference());
+
+    const auto *root(reference.GetRoot());
+    if (!root) { return; }
+
+    if (const auto *datum = root->GetNode("DATUM")) {
+        const auto *spheroid(datum->GetNode("SPHEROID"));
+        if (const auto *spheroid0 = spheroid->GetChild(0)) {
+            ellipsoid = spheroid0->GetValue();
+        }
+    }
+
+    if (const auto *vertCs = root->GetNode("VERT_CS")) {
+        if (const auto *vertDatum = vertCs->GetNode("VERT_DATUM")) {
+            if (const auto *vertDatum0 = vertDatum->GetChild(0)) {
+                if (ba::icontains(vertDatum0->GetValue(), "geoid")) {
+                    heightModel = HeightModel::orthometric;
+                }
+            }
+        }
+
+        if (const auto *unit = vertCs->GetNode("UNIT")) {
+            if (const auto *unit0 = unit->GetChild(0)) {
+                heightUnit = unit0->GetValue();
+                ba::to_lower(heightUnit);
+                // arggis.com doesn't like British English...
+                if (heightUnit == "metre") { heightUnit = "meter"; }
+            }
+        }
+    }
+
 }
 
 } // namespace slpk

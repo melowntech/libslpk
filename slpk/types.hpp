@@ -134,6 +134,8 @@ struct HeightModelInfo {
     std::string heightUnit;
 
     HeightModelInfo() : heightModel(HeightModel::orthometric) {}
+
+    HeightModelInfo(const geo::SrsDefinition &srs);
 };
 
 UTILITY_GENERATE_ENUM_CI(Profile,

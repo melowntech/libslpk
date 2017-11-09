@@ -866,8 +866,7 @@ void Writer::Detail::store(const T &value, const fs::path &path, bool raw)
 
     std::unique_lock<std::mutex> lock(mutex);
     auto os(ostream( path, raw));
-    // Json::write(os->get(), jValue, false);
-    Json::write(os->get(), jValue, true);
+    Json::write(os->get(), jValue, false);
     os->close();
 }
 
