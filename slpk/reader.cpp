@@ -508,6 +508,13 @@ void parse(Resource::list &rl, const Json::Value &value
 {
     if (value.isNull()) { return; }
 
+    if (value.size() != encodings.size()) {
+        LOGTHROW(err1, std::runtime_error)
+            << "Unexpected number of resources ("
+            << value.size() << " but expected " << encodings.size()
+            << ".";
+    }
+
     // TODO: check encodings size
     auto iencodings(encodings.begin());
     for (const auto &item : value) {
