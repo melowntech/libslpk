@@ -56,9 +56,9 @@
 #include "jsoncpp/as.hpp"
 #include "jsoncpp/io.hpp"
 
-#include "./writer.hpp"
-#include "./restapi.hpp"
-#include "./detail/files.hpp"
+#include "writer.hpp"
+#include "restapi.hpp"
+#include "detail/files.hpp"
 
 namespace fs = boost::filesystem;
 namespace bio = boost::iostreams;

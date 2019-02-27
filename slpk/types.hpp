@@ -54,7 +54,7 @@
 
 #include "roarchive/roarchive.hpp"
 
-#include "./detail/files.hpp"
+#include "detail/files.hpp"
 
 namespace slpk {
 

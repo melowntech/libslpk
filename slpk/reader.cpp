@@ -56,9 +56,9 @@
 #include "jsoncpp/as.hpp"
 #include "jsoncpp/io.hpp"
 
-#include "./reader.hpp"
-#include "./restapi.hpp"
-#include "./detail/files.hpp"
+#include "reader.hpp"
+#include "restapi.hpp"
+#include "detail/files.hpp"
 
 namespace fs = boost::filesystem;
 namespace ba = boost::algorithm;

@@ -39,7 +39,7 @@
 
 #include "roarchive/roarchive.hpp"
 
-#include "./types.hpp"
+#include "types.hpp"
 
 namespace slpk {
 

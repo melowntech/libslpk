@@ -33,7 +33,7 @@
 
 #include "math/geometry.hpp"
 
-#include "./types.hpp"
+#include "types.hpp"
 
 namespace slpk {
 
