@@ -1518,9 +1518,9 @@ RestApi::file(const boost::filesystem::path &path) const
     }
 
     std::pair<roarchive::IStream::pointer, const ApiFile*>
-        result({}, &ffiles->second);
+        result(roarchive::IStream::pointer(), &ffiles->second);
     if (result.second->content.empty()) {
-        result.first = archive_.rawistream(result.second->path);
+        result.first = std::move(archive_.rawistream(result.second->path));
     }
     return result;
 }
