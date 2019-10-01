@@ -124,7 +124,8 @@ struct SpatialReference {
 };
 
 UTILITY_GENERATE_ENUM_CI(HeightModel,
-                         ((orthometric))
+                         ((orthometric)("gravity_related_height")
+                          ("orthometric"))
                          ((ellipsoidal))
                          )
 

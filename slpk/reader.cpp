@@ -203,8 +203,8 @@ void parse(SpatialReference &srs, const Json::Value &value)
 void parse(HeightModelInfo &hmi, const Json::Value &value)
 {
     Json::get(hmi.heightModel, value, "heightModel");
-    Json::get(hmi.ellipsoid, value, "ellipsoid");
-    Json::get(hmi.heightUnit, value, "heightUnit");
+    Json::getOpt(hmi.ellipsoid, value, "ellipsoid");
+    Json::getOpt(hmi.heightUnit, value, "heightUnit");
 }
 
 void parse(Cardinality &c, const Json::Value &value, const char *name)
