@@ -292,6 +292,36 @@ struct GeometrySchema {
     typedef std::vector<GeometrySchema> list;
 };
 
+namespace v17 {
+
+struct GeometryDefinition {
+    // attribute list; for compatibility reasons re-using geometry attributes
+    GeometryAttribute::list attributes;
+    std::size_t offset = 0;
+
+    typedef std::vector<GeometryDefinition> list;
+};
+
+struct MeshGeometry {
+    std::size_t definition = 0;
+    std::size_t resource = 0;
+    std::size_t vertexCount = 0;
+    std::size_t featureCount = 0;
+};
+
+struct MeshMaterial {
+    std::size_t definition = 0;
+    std::size_t resource = 0;
+    std::size_t texelCountHint = 0;
+};
+
+struct Mesh {
+    MeshMaterial material;
+    MeshGeometry geometry;
+};
+
+} // namespace v17
+
 typedef std::function<math::Size2
                       (const roarchive::IStream::pointer&)> Size2Function;
 
@@ -390,6 +420,10 @@ struct SceneLayerInfo {
     Capabilities capabilities;
 
     Store::pointer store;
+
+    /** V 1.7
+     */
+    v17::GeometryDefinition::list geometryDefinitions;
 
     // cachedDrawingInfo
     // drawingInfo
@@ -501,6 +535,7 @@ struct Node {
     Resource::list textureData;
     LodSelection::list lodSelection;
     Feature::list features;
+    v17::GeometryDefinition geometryDefinition;
 
     Node(const Store::pointer &store = Store::pointer()) : store_(store) {}
     const Store& store() const { return *store_; }

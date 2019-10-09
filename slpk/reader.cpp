@@ -317,6 +317,53 @@ void parse(GeometrySchema &gs, const Json::Value &value)
           , "featureAttributes", "featureAttributeOrder");
 }
 
+/** Parse geometryBuffer like old geometry attributes
+ */
+void parse(v17::GeometryDefinition &gd, const Json::Value &value)
+{
+    const auto &getDefinition([&](const char *in, const char *out)
+    {
+        if (!value.isMember(in)) { return; }
+        const auto &src(value[in]);
+
+        gd.attributes.emplace_back(out);
+        auto &ga(gd.attributes.back());
+
+        Json::get(ga.valueType, src, "type");
+        Json::get(ga.valuesPerElement, src, "component");
+    });
+
+    getDefinition("position", "position");
+    getDefinition("normal", "normal");
+    getDefinition("uv0", "uv0");
+    getDefinition("uv1", "uv1");
+    getDefinition("color", "color");
+    getDefinition("uvRegion", "region");
+}
+
+void parse(v17::GeometryDefinition::list &gds, const Json::Value &value)
+{
+    for (const auto &item : value) {
+        // TODO: check presence of geometryBuffers
+
+        const auto &buffers
+            (Json::check(item["geometryBuffers"]
+                         , Json::arrayValue, "geometryBuffers"));
+
+        if (buffers.size() < 1) {
+            LOGTHROW(err1, std::runtime_error)
+                << "There must be at least one geometry buffer.";
+        }
+
+        const auto &buffer
+            (Json::check(buffers[0]
+                         , Json::objectValue, "geometryBuffers[0]"));
+
+        gds.emplace_back();
+        parse(gds.back(), buffer);
+    }
+}
+
 void parse(Encoding &encoding, const Json::Value &value, const char *key
            , const boost::optional<std::string> &dfltMime = boost::none)
 {
@@ -426,6 +473,13 @@ loadSceneLayerInfo(std::istream &in, const fs::path &path)
     parse(*sli.store
           , Json::check(value["store"], Json::objectValue, "store"));
 
+    // v1.7
+    if (value.isMember("geometryDefinitions")) {
+        parse(sli.geometryDefinitions
+              , Json::check(value["geometryDefinitions"]
+                            , Json::arrayValue, "geometryDefinitions"));
+    }
+
     return out;
 }
 
@@ -508,14 +562,20 @@ void parse(Resource::list &rl, const Json::Value &value
 {
     if (value.isNull()) { return; }
 
-    if (value.size() != encodings.size()) {
+    if (value.size() > encodings.size()) {
         LOGTHROW(err1, std::runtime_error)
             << "Unexpected number of resources ("
             << value.size() << " but expected " << encodings.size()
             << ".";
     }
 
-    // TODO: check encodings size
+    if (value.size() < encodings.size()) {
+        LOG(warn1)
+            << "Unexpected number of resources ("
+            << value.size() << " but expected " << encodings.size()
+            << ". Ingoring.";
+    }
+
     auto iencodings(encodings.begin());
     for (const auto &item : value) {
         rl.emplace_back();
@@ -590,11 +650,31 @@ Node loadNodeIndex(const roarchive::IStream::pointer &istream
     return loadNodeIndex(istream->get(), istream->path(), dir, store);
 }
 
-template <typename T>
+template <bool normalize> struct Normalize {};
+
+template <>
+struct Normalize<true> {
+    template <typename DstT, typename SrcT>
+    static DstT apply(SrcT value) {
+        return DstT(value) / std::numeric_limits<SrcT>::max();
+    }
+};
+
+template <>
+struct Normalize<false> {
+    template <typename DstT, typename SrcT>
+    static DstT apply(SrcT value) {
+        return DstT(value);
+    }
+};
+
+template <typename T, bool normalize = false>
 void read(std::istream &in, DataType type, T &out)
 {
-#define READ_DATATYPE(ENUM, TYPE)                               \
-    case DataType::ENUM: out = T(bin::read<TYPE>(in)); return
+#define READ_DATATYPE(ENUM, TYPE)                                           \
+    case DataType::ENUM:                                                    \
+        out = Normalize<normalize>::template apply<T>(bin::read<TYPE>(in)); \
+        return
 
     switch (type) {
         READ_DATATYPE(uint8, std::uint8_t);
@@ -618,11 +698,11 @@ void read(std::istream &in, DataType type, T &out)
     throw;
 }
 
-template <typename T>
+template <typename T, bool normalize = false>
 T read(std::istream &in, DataType type)
 {
     T out;
-    read(in, type, out);
+    read<T, normalize>(in, type, out);
     return out;
 }
 
@@ -647,7 +727,7 @@ std::size_t byteCount(const DataType &type)
     }
 #undef MEASURE_DATATYPE
 
-LOGTHROW(err1, std::logic_error) << "Invalid datatype.";
+    LOGTHROW(err1, std::logic_error) << "Invalid datatype.";
     throw;
 }
 
@@ -883,10 +963,6 @@ private:
     TextureMap tc_;
 };
 
-double normalizeRegion(double value) {
-    return value / 65535.0;
-}
-
 class RegionFuser : public Fuser {
 public:
     RegionFuser(std::istream &in, MeshLoader &loader, const Node &node
@@ -925,13 +1001,19 @@ private:
     }
 
     void loadTxRegions(const GeometryAttribute &ga) {
-        for (auto &regionIndex : regions_) {
+        if (ga.valuesPerElement != 4) {
+            LOGTHROW(err1, std::runtime_error)
+                << "Number of region elements must be 4 not "
+                << ga.valuesPerElement << ".";
+        }
 
+        LOG(debug) << "Loading data for texture regions.";
+        for (auto &regionIndex : regions_) {
             Region region;
-            region.ll(0) = normalizeRegion(read<double>(in_, ga.valueType));
-            region.ll(1) = normalizeRegion(read<double>(in_, ga.valueType));
-            region.ur(0) = normalizeRegion(read<double>(in_, ga.valueType));
-            region.ur(1) = normalizeRegion(read<double>(in_, ga.valueType));
+            region.ll(0) = read<double, true>(in_, ga.valueType);
+            region.ll(1) = read<double, true>(in_, ga.valueType);
+            region.ur(0) = read<double, true>(in_, ga.valueType);
+            region.ur(1) = read<double, true>(in_, ga.valueType);
 
             regionIndex = add(regionMap_, &MeshLoader::addTxRegion, region);
         }
@@ -1023,8 +1105,8 @@ void loadMesh(MeshLoader &loader, const Node &node
 
     case Topology::interleavedArray:
         LOGTHROW(err1, std::runtime_error)
-            << "Cannot read mesh from " << path << "with indexed topology: "
-            "unsupported.";
+            << "Cannot read mesh from " << path
+            << " with interleaved array topology: unsupported.";
         break;
 
     case Topology::indexed:
