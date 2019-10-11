@@ -529,16 +529,15 @@ void parse(NodeReference::list &nrl, const Json::Value &value
 }
 
 void parse(Resource &r, const Json::Value &value, const std::string &dir
-           , const Encoding *encoding = nullptr)
+           , const Encoding *encoding = nullptr
+           , bool isDir = false)
 {
     Json::get(r.href, value, "href");
 
-    if (encoding) {
-        r.href = joinPaths(dir, r.href);
-        r.encoding = encoding;
-    } else {
-        r.href = joinPaths(dir, r.href);
-    }
+    r.href = joinPaths(dir, r.href);
+    if (isDir) { makeDirInplace(r.href); }
+
+    if (encoding) { r.encoding = encoding; }
 
     // layerContent
     // featureRange
@@ -548,17 +547,19 @@ void parse(Resource &r, const Json::Value &value, const std::string &dir
 }
 
 void parse(boost::optional<Resource> &r, const Json::Value &value
-           , const std::string &dir, const Encoding *encoding = nullptr)
+           , const std::string &dir, const Encoding *encoding = nullptr
+           , bool isDir = false)
 {
     if (value.isNull()) { return; }
 
     r = boost::in_place();
-    parse(*r, value, dir, encoding);
+    parse(*r, value, dir, encoding, isDir);
 }
 
 void parse(Resource::list &rl, const Json::Value &value
            , const std::string &dir
-           , const Encoding::list &encodings)
+           , const Encoding::list &encodings
+           , bool isDir = false)
 {
     if (value.isNull()) { return; }
 
@@ -579,17 +580,17 @@ void parse(Resource::list &rl, const Json::Value &value
     auto iencodings(encodings.begin());
     for (const auto &item : value) {
         rl.emplace_back();
-        parse(rl.back(), item, dir, &*iencodings++);
+        parse(rl.back(), item, dir, &*iencodings++, isDir);
     }
 }
 
 void parse(Resource::list &rl, const Json::Value &value
            , const std::string &dir
-           , const Encoding &encoding)
+           , const Encoding &encoding, bool isDir = false)
 {
     for (const auto &item : value) {
         rl.emplace_back();
-        parse(rl.back(), item, dir, &encoding);
+        parse(rl.back(), item, dir, &encoding, isDir);
     }
 }
 
@@ -624,7 +625,7 @@ Node loadNodeIndex(std::istream &in, const fs::path &path
     parse(ni.sharedResource
           , Json::check(Json::Null, value["sharedResource"]
                         , Json::objectValue, "sharedResource")
-          , dir);
+          , dir, nullptr, true);
 
     parse(ni.featureData
           , Json::check(Json::Null, value["featureData"]
@@ -648,6 +649,50 @@ Node loadNodeIndex(const roarchive::IStream::pointer &istream
                    , const std::string &dir, const Store::pointer &store)
 {
     return loadNodeIndex(istream->get(), istream->path(), dir, store);
+}
+
+void parse(Material::Params &params, const Json::Value &value)
+{
+    Json::get(params.renderMode, value, "renderMode");
+    Json::getOpt(params.vertexRegions, value, "vertexRegions");
+    Json::getOpt(params.vertexColors, value, "vertexColors");
+}
+
+void parse(Material &material, const Json::Value &value)
+{
+    Json::get(material.name, value, "name");
+    Json::getOpt(material.type, value, "type");
+
+    if (value.isMember("params")) {
+        parse(material.params, value["params"]);
+    }
+}
+
+void parse(Material::list &materials, const Json::Value &value)
+{
+    for (const auto &name : value.getMemberNames()) {
+        materials.emplace_back(name);
+        parse(materials.back(), value[name]);
+    }
+}
+
+SharedResource loadSharedResource(std::istream &in, const fs::path &path)
+{
+    LOG(info1) << "Loading SLPK Shared Rsource from " << path  << ".";
+    const auto value(Json::read(in, path, "SLPK Shared Resource"));
+
+    SharedResource sr;
+
+    parse(sr.materialDefinitions
+          , Json::check(Json::Null, value["materialDefinitions"]
+                        , Json::objectValue, "materialDefinitions"));
+
+    return sr;
+}
+
+SharedResource loadSharedResource(const roarchive::IStream::pointer &istream)
+{
+    return loadSharedResource(istream->get(), istream->path());
 }
 
 template <bool normalize> struct Normalize {};
@@ -763,6 +808,11 @@ Header loadHeader(std::istream &in, const HeaderAttribute::list &has)
     return h;
 }
 
+struct MeshFeatures {
+    bool hasRegions = false;
+    bool hasColor = false;
+};
+
 namespace paa {
 
 struct CompareRegion {
@@ -790,10 +840,13 @@ void callAddValue(MeshLoader &loader, const AddValueType &addValue
 class Fuser {
 public:
     Fuser(std::istream &in, MeshLoader &loader, const Node &node
-          , const Header &header)
-        : in_(in), loader_(loader), node_(node), header_(header)
+          , const Header &header, const MeshFeatures &features)
+        : in_(in), loader_(loader), node_(node)
+        , header_(header), features_(features)
         , verticesLoaded_(false)
-        , faces_(header.vertexCount / 3), facesTc_(header.vertexCount / 3)
+        , faces_(header.vertexCount / 3)
+        , facesNormal_(header.vertexCount / 3)
+        , facesTc_(header.vertexCount / 3)
     {
         if (header.vertexCount % 3) {
             LOGTHROW(err1, std::runtime_error)
@@ -812,6 +865,9 @@ public:
                 verticesLoaded_ = true;
             } else if (ga.key == "uv0") {
                 loadTcFaces(ga);
+            } else if (ga.key == "normal") {
+                loadNormals(ga);
+                //ignore(ga);
             } else if (ga.key == "region") {
                 loadTxRegions(ga);
             } else {
@@ -850,8 +906,9 @@ public:
 
         // feed loader with faces
         auto ifacesTc(facesTc_.begin());
+        auto ifacesNormal(facesNormal_.begin());
         for (const auto &face : faces_) {
-            loader_.addFace(face, *ifacesTc++);
+            loader_.addFace(face, *ifacesTc++, *ifacesNormal++);
         }
     }
 
@@ -882,10 +939,18 @@ protected:
         return add(vertices_, &MeshLoader::addVertex, point);
     }
 
+    int normal(const GeometryAttribute &ga) {
+        math::Point3d point;
+        read(in_, ga.valueType, point(0));
+        read(in_, ga.valueType, point(1));
+        read(in_, ga.valueType, point(2));
+        return add(normals_, &MeshLoader::addNormal, point);
+    }
+
     void loadFaces(const GeometryAttribute &ga) {
         if (ga.valuesPerElement != 3) {
             LOGTHROW(err1, std::runtime_error)
-                << "Number of vertex elements must be 3 not "
+                << "Number of vertex elements must be 3, not "
                 << ga.valuesPerElement << ".";
         }
 
@@ -894,6 +959,21 @@ protected:
             face(0) = vertex(ga);
             face(1) = vertex(ga);
             face(2) = vertex(ga);
+        }
+    }
+
+    void loadNormals(const GeometryAttribute &ga) {
+        if (ga.valuesPerElement != 3) {
+            LOGTHROW(err1, std::runtime_error)
+                << "Number of normal elements must be 3, not "
+                << ga.valuesPerElement << ".";
+        }
+
+        LOG(debug) << "Loading data for normals.";
+        for (auto &face : facesNormal_) {
+            face(0) = normal(ga);
+            face(1) = normal(ga);
+            face(2) = normal(ga);
         }
     }
 
@@ -913,6 +993,7 @@ protected:
     MeshLoader &loader_;
     const Node &node_;
     const Header &header_;
+    const MeshFeatures &features_;
     bool verticesLoaded_;
 
     typedef std::map<math::Point3d, int> VertexMap;
@@ -921,22 +1002,24 @@ protected:
     typedef std::map<Region, int, CompareRegion> RegionMap;
 
     Faces faces_;
+    Faces facesNormal_;
     FacesTc facesTc_;
     VertexMap vertices_;
+    VertexMap normals_;
 };
 
 class SimpleFuser : public Fuser {
 public:
     SimpleFuser(std::istream &in, MeshLoader &loader, const Node &node
-                , const Header &header)
-        : Fuser(in, loader, node, header)
+                , const Header &header, const MeshFeatures &features)
+        : Fuser(in, loader, node, header, features)
     {}
 
 private:
     void loadTcFaces(const GeometryAttribute &ga) {
         if (ga.valuesPerElement != 2) {
             LOGTHROW(err1, std::runtime_error)
-                << "Number of UV elements must be 2 not "
+                << "Number of UV elements must be 2, not "
                 << ga.valuesPerElement << ".";
         }
 
@@ -966,8 +1049,8 @@ private:
 class RegionFuser : public Fuser {
 public:
     RegionFuser(std::istream &in, MeshLoader &loader, const Node &node
-                , const Header &header)
-        : Fuser(in, loader, node, header)
+                , const Header &header, const MeshFeatures &features)
+        : Fuser(in, loader, node, header, features)
         , regions_(header.vertexCount)
     {}
 
@@ -975,7 +1058,7 @@ private:
     void loadTcFaces(const GeometryAttribute &ga) {
         if (ga.valuesPerElement != 2) {
             LOGTHROW(err1, std::runtime_error)
-                << "Number of UV elements must be 2 not "
+                << "Number of UV elements must be 2, not "
                 << ga.valuesPerElement << ".";
         }
 
@@ -1003,7 +1086,7 @@ private:
     void loadTxRegions(const GeometryAttribute &ga) {
         if (ga.valuesPerElement != 4) {
             LOGTHROW(err1, std::runtime_error)
-                << "Number of region elements must be 4 not "
+                << "Number of region elements must be 4, not "
                 << ga.valuesPerElement << ".";
         }
 
@@ -1017,6 +1100,11 @@ private:
 
             regionIndex = add(regionMap_, &MeshLoader::addTxRegion, region);
         }
+#if 0
+        for (const auto &item : regionMap_) {
+            LOG(info4) << item.first << " -> " << item.second;
+        }
+#endif
     }
 
     void finalize() {
@@ -1058,23 +1146,25 @@ private:
 
 void load(MeshLoader &loader, std::istream &in
           , const Node &node, const Header &header
+          , const MeshFeatures &features
           , const GeometrySchema &schema)
 {
     // empty mesh?
     if (!header.vertexCount) { return; }
 
-    if (has(schema.vertexAttributes, "region")) {
+    if (features.hasRegions && has(schema.vertexAttributes, "reions")) {
         // we need to take UV (sub) regions into account
-        RegionFuser(in, loader, node, header)(schema);
+        RegionFuser(in, loader, node, header, features)(schema);
     } else {
         // good old textured mesh
-        SimpleFuser(in, loader, node, header)(schema);
+        SimpleFuser(in, loader, node, header, features)(schema);
     }
 }
 
 } // namespace paa
 
 void loadMesh(MeshLoader &loader, const Node &node
+              , const MeshFeatures &features
               , const Resource &
               , std::istream &in, const fs::path &path)
 {
@@ -1100,7 +1190,7 @@ void loadMesh(MeshLoader &loader, const Node &node
 
     switch (schema.topology) {
     case Topology::perAttributeArray:
-        paa::load(loader, in, node, header, schema);
+        paa::load(loader, in, node, header, features, schema);
         break;
 
     case Topology::interleavedArray:
@@ -1118,10 +1208,12 @@ void loadMesh(MeshLoader &loader, const Node &node
 }
 
 void loadMesh(MeshLoader &loader, const Node &node
+              , const MeshFeatures &features
               , const Resource &resource
               , const roarchive::IStream::pointer &istream)
 {
-    loadMesh(loader, node, resource, istream->get(), istream->path());
+    loadMesh(loader, node, features, resource
+             , istream->get(), istream->path());
 }
 
 } // namespace
@@ -1281,9 +1373,17 @@ Node Archive::loadNodeIndex(const fs::path &dir
     return slpk::loadNodeIndex(is, dir.string(), sli_.store);
 }
 
-Node Archive::loadRootNodeIndex() const
+SharedResource Archive::loadSharedResource(const boost::filesystem::path &dir)
+    const
 {
-    return loadNodeIndex(sli_.store->rootNode);
+    auto is(istream
+            (joinPaths(dir.string(), detail::constants::SharedResource)));
+    return slpk::loadSharedResource(is);
+}
+
+Node Archive::loadRootNodeIndex(boost::filesystem::path *path) const
+{
+    return loadNodeIndex(sli_.store->rootNode, path);
 }
 
 Tree Archive::loadTree() const
@@ -1291,24 +1391,36 @@ Tree Archive::loadTree() const
     Tree tree;
 
     std::queue<const NodeReference*> queue;
-    auto add([&](Node node)
+    auto add([&](Node &&node)
     {
-        auto res(tree.nodes.insert(Node::map::value_type
-                                   (node.id, std::move(node))));
-        for (const auto &child : res.first->second.children) {
+        SharedResource::optional sharedResource;
+        if (node.hasSharedResource()) {
+            sharedResource = loadSharedResource
+                (node.sharedResource->href);
+        }
+
+        auto res(tree.nodes.emplace
+                 (std::piecewise_construct
+                  , std::forward_as_tuple(node.id)
+                  , std::forward_as_tuple(std::move(node)
+                                          , std::move(sharedResource))));
+        for (const auto &child : res.first->second.node.children) {
             queue.push(&child);
         }
     });
 
     // load root and remember id
     {
-        auto root(loadRootNodeIndex());
+        fs::path path;
+        auto root(loadRootNodeIndex(&path));
         tree.rootNodeId = root.id;
         add(std::move(root));
     }
 
     while (!queue.empty()) {
-        add(loadNodeIndex(queue.front()->href));
+        fs::path path;
+        auto node(loadNodeIndex(queue.front()->href, &path));
+        add(std::move(node));
         queue.pop();
     }
 
@@ -1326,7 +1438,7 @@ NodeInfo::list Archive::loadNodes() const
     while (!queue.empty()) {
         const auto &href(queue.front());
         auto node(loadNodeIndex(href, &path));
-        nodes.push_back(NodeInfo(href, path.string(), std::move(node)));
+        nodes.emplace_back(href, path.string(), std::move(node));
         for (const auto &child : nodes.back().node.children) {
             queue.push(child.href);
         }
@@ -1336,10 +1448,23 @@ NodeInfo::list Archive::loadNodes() const
     return nodes;
 }
 
-void Archive::loadGeometry(GeometryLoader &loader, const Node &node) const
+void Archive::loadGeometry(GeometryLoader &loader, const Node &node
+                           , const SharedResource::optional &sharedResource)
+    const
 {
+    // TODO: features should come from features but... let's wait for v1.7
+    MeshFeatures features;
+    if (sharedResource) {
+        if (!sharedResource->materialDefinitions.empty()) {
+            // use first material
+            const auto &material
+                (*sharedResource->materialDefinitions.begin());
+            features.hasRegions = material.params.vertexRegions;
+        }
+    }
+
     for (const auto &resource : node.geometryData) {
-        loadMesh(loader.next(), node, resource
+        loadMesh(loader.next(), node, features, resource
                  , istream(resource.href + ".bin"));
     }
 }
@@ -1398,10 +1523,12 @@ private:
 
 } // namespace
 
-Mesh Archive::loadGeometry(const Node &node) const
+Mesh Archive::loadGeometry(const Node &node
+                           , const SharedResource::optional &sharedResource)
+    const
 {
     SimpleMeshLoader loader(node.geometryData.size());
-    loadGeometry(loader, node);
+    loadGeometry(loader, node, sharedResource);
     return loader.moveout();
 }
 

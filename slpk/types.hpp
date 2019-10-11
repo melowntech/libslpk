@@ -550,24 +550,17 @@ struct Node {
         return nr;
     }
 
+    bool hasSharedResource() {
+        // TODO: more fields?
+        return sharedResource && !geometryData.empty();
+    }
+
     typedef std::map<std::string, Node> map;
 
 private:
     /** Reference to shared store.
      */
     Store::pointer store_;
-};
-
-struct Tree {
-    std::string rootNodeId;
-
-    Node::map nodes;
-
-    const Node* find(const std::string &id) const {
-        auto fnodes(nodes.find(id));
-        if (fnodes == nodes.end()) { return nullptr; }
-        return &fnodes->second;
-    }
 };
 
 UTILITY_GENERATE_ENUM_CI(MaterialType,
@@ -683,6 +676,8 @@ struct Texture {
 struct SharedResource {
     Material::list materialDefinitions;
     Texture::list textureDefinitions;
+
+    using optional = boost::optional<SharedResource>;
 };
 
 /** Geometry reference
@@ -746,12 +741,50 @@ struct NodeInfo {
     std::string fullpath;
     Node node;
 
-    NodeInfo(std::string href, std::string fullpath, Node node)
+    NodeInfo(std::string href, std::string fullpath, Node &&node)
         : href(std::move(href)), fullpath(std::move(fullpath))
         , node(std::move(node))
     {}
 
     typedef std::vector<NodeInfo> list;
+};
+
+struct TreeNode {
+    Node node;
+    SharedResource::optional sharedResource;
+
+    TreeNode(Node &&node, SharedResource::optional &&sharedResource)
+        : node(std::move(node)), sharedResource(std::move(sharedResource))
+    {}
+
+    using map = std::map<std::string, TreeNode>;
+};
+
+struct Tree {
+    std::string rootNodeId;
+
+    TreeNode::map nodes;
+
+    const Node* node(const std::string &id) const {
+        if (auto *tn = find(id)) {
+            return &tn->node;
+        }
+        return nullptr;
+    }
+
+    const SharedResource* sharedResource(const std::string &id) const {
+        if (auto *tn = find(id)) {
+            if (tn->sharedResource) { return &*tn->sharedResource; }
+        }
+        return nullptr;
+    }
+
+    const TreeNode* find(const std::string &id) const {
+        auto fnodes(nodes.find(id));
+        if (fnodes == nodes.end()) { return nullptr; }
+        return &fnodes->second;
+    }
+
 };
 
 // inlines

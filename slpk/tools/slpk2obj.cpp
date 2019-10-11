@@ -218,40 +218,38 @@ math::Extents2 measureMesh(const slpk::Tree &tree
     auto topLevel(std::numeric_limits<int>::max());
     for (const auto item : tree.nodes) {
         if (notPicked(item.first, pickedNodes)) { continue; }
-        const auto &node(item.second);
+        const auto &node(item.second.node);
         if (node.hasGeometry()) {
             topLevel = std::min(topLevel, node.level);
         }
     }
 
     // collect nodes for OpenMP
-    std::vector<const slpk::Node*> nodes;
+    std::vector<const slpk::TreeNode*> treeNodes;
     for (const auto &item : tree.nodes) {
         if (notPicked(item.first, pickedNodes)) { continue; }
-        const auto &node(item.second);
+        const auto &node(item.second.node);
         if ((node.level == topLevel) && (node.hasGeometry())) {
-            nodes.push_back(&node);
+            treeNodes.push_back(&item.second);
         }
     }
 
-    const auto *pnodes(&nodes);
-
     math::Extents2 extents(math::InvalidExtents{});
-    auto *pextents(&extents);
 
-    UTILITY_OMP(parallel for firstprivate(conv))
-    for (std::size_t i = 0; i < nodes.size(); ++i) {
-        const auto &node(*(*pnodes)[i]);
+    UTILITY_OMP(parallel for firstprivate(conv), shared(extents, treeNodes))
+    for (std::size_t i = 0; i < treeNodes.size(); ++i) {
+        const auto &treeNode(*treeNodes[i]);
+        const auto &node(treeNode.node);
 
         // load geometry
         math::Extents2 e(math::InvalidExtents{});
         MeasureMesh loader(conv, e);
-        input.loadGeometry(loader, node);
+        input.loadGeometry(loader, node, treeNode.sharedResource);
 
         UTILITY_OMP(critical(slpk2obj_measureMesh))
         {
-            math::update(*pextents, e.ll);
-            math::update(*pextents, e.ur);
+            math::update(extents, e.ll);
+            math::update(extents, e.ur);
         }
     }
 
@@ -421,23 +419,20 @@ void write(const slpk::Archive &input, fs::path &output
     const auto center(math::center(extents));
 
     // collect nodes for OpenMP
-    std::vector<const slpk::Node*> nodes;
+    std::vector<const slpk::TreeNode*> treeNodes;
     for (const auto &item : tree.nodes) {
         if (notPicked(item.first, pickedNodes)) { continue; }
-        nodes.push_back(&item.second);
+        treeNodes.push_back(&item.second);
     }
 
-    const auto *pnodes(&nodes);
-    const auto *pcenter(&center);
-
-    UTILITY_OMP(parallel for firstprivate(conv))
-    for (std::size_t i = 0; i < nodes.size(); ++i) {
-        const auto &node(*(*pnodes)[i]);
-        const auto &center(*pcenter);
+    UTILITY_OMP(parallel for firstprivate(conv), shared(treeeNodes, center))
+    for (std::size_t i = 0; i < treeNodes.size(); ++i) {
+        const auto &treeNode(*treeNodes[i]);
+        const auto &node(treeNode.node);
 
         LOG(info3) << "Converting <" << node.id << ">.";
 
-        auto geometry(input.loadGeometry(node));
+        auto geometry(input.loadGeometry(node, treeNode.sharedResource));
 
         auto igd(node.geometryData.begin());
         int meshIndex(0);

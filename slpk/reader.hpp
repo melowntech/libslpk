@@ -150,7 +150,7 @@ public:
 
     geo::SrsDefinition srs() const;
 
-    /** Loads node index from given path inside archive.
+    /** Loads node index from given path inside the archive.
      *
      * \param dir node directory
      * \param path real path to node file (filled when non-null);
@@ -159,9 +159,17 @@ public:
     Node loadNodeIndex(const boost::filesystem::path &dir
                        , boost::filesystem::path *path = nullptr) const;
 
+    /** Loads shared resource inside the archive.
+     *
+     * \param shared resource dir
+     * \return loaded shared resource
+     */
+    SharedResource loadSharedResource(const boost::filesystem::path &dir)
+        const;
+
     /** Load root node (from path stated in scene layer info).
      */
-    Node loadRootNodeIndex() const;
+    Node loadRootNodeIndex(boost::filesystem::path *path = nullptr) const;
 
     /** Loads whole node tree.
      */
@@ -173,11 +181,13 @@ public:
 
     /** Loads node geometry. Possibly more meshes than just one.
      */
-    Mesh loadGeometry(const Node &node) const;
+    Mesh loadGeometry(const Node &node
+                      , const SharedResource::optional &sharedResource) const;
 
     /** Generic mesh load interface.
      */
-    void loadGeometry(GeometryLoader &loader, const Node &node) const;
+    void loadGeometry(GeometryLoader &loader, const Node &node
+                      , const SharedResource::optional &sharedResource) const;
 
     /** Opens texture file for given geometry mesh. If there are more version of
      *  the same texture the returns PNG or JPEG. DDS is ignored.
