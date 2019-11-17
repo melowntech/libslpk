@@ -425,7 +425,7 @@ void write(const slpk::Archive &input, fs::path &output
         treeNodes.push_back(&item.second);
     }
 
-    UTILITY_OMP(parallel for firstprivate(conv), shared(treeeNodes, center))
+    UTILITY_OMP(parallel for firstprivate(conv), shared(treeNodes, center))
     for (std::size_t i = 0; i < treeNodes.size(); ++i) {
         const auto &treeNode(*treeNodes[i]);
         const auto &node(treeNode.node);
