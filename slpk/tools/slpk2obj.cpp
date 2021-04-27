@@ -259,7 +259,7 @@ math::Extents2 measureMesh(const slpk::Tree &tree
 cv::Mat stream2mat(const roarchive::IStream::pointer &txStream)
 {
     const auto buf(txStream->read());
-    const auto image(cv::imdecode(buf, CV_LOAD_IMAGE_COLOR));
+    const auto image(cv::imdecode(buf, cv::IMREAD_COLOR));
 
     if (!image.data) {
         LOGTHROW(err1, std::runtime_error)
@@ -425,7 +425,7 @@ void write(const slpk::Archive &input, fs::path &output
         treeNodes.push_back(&item.second);
     }
 
-    UTILITY_OMP(parallel for firstprivate(conv), shared(treeNodes, center))
+    UTILITY_OMP(parallel for firstprivate(conv), shared(treeNodes))
     for (std::size_t i = 0; i < treeNodes.size(); ++i) {
         const auto &treeNode(*treeNodes[i]);
         const auto &node(treeNode.node);
