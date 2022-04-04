@@ -1235,6 +1235,12 @@ geo::SrsDefinition SpatialReference::srs() const
     return geo::SrsDefinition(wkid, vcsWkid);
 }
 
+void SpatialReference::setSrs(const geo::SrsDefinition &srs)
+{
+    wkt = srs.as(geo::SrsDefinition::Type::wkt).srs;
+    wkid = latestWkid = vcsWkid = latestVcsWkid = 0;
+}
+
 void Store::finish(const std::string &cwd)
 {
     rootNode = joinPaths(cwd, makeDir(rootNode));

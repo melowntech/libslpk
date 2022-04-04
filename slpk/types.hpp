@@ -120,6 +120,8 @@ struct SpatialReference {
         : wkid(4326), latestWkid(), vcsWkid(5773), latestVcsWkid()
     {}
 
+    void setSrs(const geo::SrsDefinition &srs);
+
     geo::SrsDefinition srs() const;
 };
 
