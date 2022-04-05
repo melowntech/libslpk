@@ -493,14 +493,11 @@ UTILITY_GENERATE_ENUM_CI(MetricType,
 
 struct LodSelection {
     MetricType metricType;
-    double maxValue;
-    double avgValue;
-    double minValue;
     double maxError;
 
     LodSelection()
         : metricType(MetricType::maxScreenThreshold)
-        , maxValue(), avgValue(), minValue(), maxError()
+        , maxError()
     {}
 
     typedef std::vector<LodSelection> list;

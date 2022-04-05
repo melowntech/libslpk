@@ -385,9 +385,6 @@ void build(Json::Value &value, const LodSelection &lodSelection)
 {
     value = Json::objectValue;
     value["metricType"] = asString(lodSelection.metricType);
-    if (lodSelection.maxValue) { value["maxValue"] = lodSelection.maxValue; }
-    if (lodSelection.avgValue) { value["avgValue"] = lodSelection.avgValue; }
-    if (lodSelection.minValue) { value["minValue"] = lodSelection.minValue; }
     if (lodSelection.maxError) { value["maxError"] = lodSelection.maxError; }
 }
 
