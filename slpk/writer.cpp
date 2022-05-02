@@ -833,6 +833,12 @@ struct Writer::Detail {
         , metadata(metadata), nodeCount(), textureCount()
     {}
 
+    Detail(utility::zip::Writer &&inZip
+           , const Metadata &metadata, const SceneLayerInfo &sli)
+        : sli(sli), gs(getGeometrySchema(this->sli)), zip(std::move(inZip))
+        , metadata(metadata), nodeCount(), textureCount()
+    {}
+
     void flush(const SceneLayerInfoCallback &callback);
 
     utility::zip::Writer::OStream::pointer
@@ -1027,6 +1033,12 @@ Writer::Writer(const boost::filesystem::path &path
                , const Metadata &metadata, const SceneLayerInfo &sli
                , bool overwrite)
     : detail_(std::make_shared<Detail>(path, metadata, sli, overwrite))
+{}
+
+Writer::Writer(utility::zip::Writer &&zip
+               , const Metadata &metadata
+               , const SceneLayerInfo &sli)
+    : detail_(std::make_shared<Detail>(std::move(zip), metadata, sli))
 {}
 
 void Writer::write(const Node &node, const SharedResource *sharedResource)

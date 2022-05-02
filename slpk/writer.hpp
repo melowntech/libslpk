@@ -35,6 +35,9 @@
 
 #include "types.hpp"
 
+// fwd declaration
+namespace utility { namespace zip { class Writer; } }
+
 namespace slpk {
 
 class TextureSaver {
@@ -70,6 +73,10 @@ public:
            , const Metadata &metadata
            , const SceneLayerInfo &sli
            , bool overwrite = false);
+
+    Writer(utility::zip::Writer &&zip
+           , const Metadata &metadata
+           , const SceneLayerInfo &sli);
 
     void write(const SceneLayerInfo &sli);
 
