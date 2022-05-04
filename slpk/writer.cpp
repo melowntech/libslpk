@@ -867,10 +867,16 @@ void Writer::Detail::store(const T &value, const fs::path &path, bool raw)
     Json::Value jValue;
     build(jValue, value);
 
-    std::unique_lock<std::mutex> lock(mutex);
-    auto os(ostream( path, raw));
-    Json::write(os->get(), jValue, false);
-    os->close();
+    // in-memory serialize before writing to the output
+    std::stringstream tmp;
+    Json::write(tmp, jValue, false);
+
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        auto os(ostream(path, raw));
+        os->get() << tmp.rdbuf();
+        os->close();
+    }
 }
 
 void Writer::Detail::flush(const SceneLayerInfoCallback &callback) {
@@ -935,11 +941,6 @@ void Writer::Detail::write(Node &node, SharedResource &sharedResource
 
     auto &textures(sharedResource.textureDefinitions);
 
-    if (!textures.empty()) {
-        LOGTHROW(err2, std::runtime_error)
-            << "Multi texture bundle not supported.";
-    }
-
     const auto txId(textureCount++);
 
     // add texture
@@ -961,11 +962,12 @@ void Writer::Detail::write(Node &node, SharedResource &sharedResource
     const auto index(node.geometryData.size());
 
     // write textures
+    const int midx(textures.size() - 1);
     int txi(0);
     for (const auto &encoding : sli.store->textureEncoding) {
         // node
         const auto href
-            (utility::format("textures/0_%d", txi++));
+            (utility::format("textures/%d_%d", midx, txi++));
         auto &td(utility::append(node.textureData, "./" + href));
         td.multiTextureBundle = false;
 
@@ -977,13 +979,18 @@ void Writer::Detail::write(Node &node, SharedResource &sharedResource
         const fs::path texturePath
             (detail::constants::Nodes / node.id / (href + ".bin"));
 
-        std::unique_lock<std::mutex> lock(mutex);
+        // in-memory serialize before writing to the output
+        std::stringstream tmp;
         // TODO: do not report DDS as raw (if ever used)
-        auto os(ostream(texturePath, true));
-        textureSaver.save(os->get(), encoding.mime);
+        textureSaver.save(tmp, encoding.mime);
 
-        const auto stat(os->close());
-        imageVersion.length = stat.uncompressedSize;
+        {
+            std::unique_lock<std::mutex> lock(mutex);
+            auto os(ostream(texturePath, true));
+            os->get() << tmp.rdbuf();
+            const auto stat(os->close());
+            imageVersion.length = stat.uncompressedSize;
+        }
     }
 
     // write meshes and features
