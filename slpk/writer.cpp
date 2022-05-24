@@ -182,7 +182,7 @@ void build(Json::Value &value, const Encoding &encoding)
 void build(Json::Value &value, const Encoding::list &encodings)
 {
     value = Json::arrayValue;
-    for (const auto encoding : encodings) { value.append(encoding.mime); }
+    for (const auto &encoding : encodings) { value.append(encoding.mime); }
 }
 
 void build(Json::Value &value, const Cardinality &cardinality)
@@ -526,7 +526,7 @@ void build(Json::Value &value, const GeometryReference &geometry)
 void build(Json::Value &value, GeometryReference::list &geometries)
 {
     value = Json::arrayValue;
-    for (const auto geometry : geometries) {
+    for (const auto &geometry : geometries) {
         build(value.append({}), geometry);
     }
 }
@@ -569,7 +569,7 @@ void build(Json::Value &value, const ArrayBufferView &geometry)
 void build(Json::Value &value, const FeatureData::Feature::list &features)
 {
     value = Json::arrayValue;
-    for (const auto feature : features) {
+    for (const auto &feature : features) {
         build(value.append({}), feature);
     }
 }
@@ -577,7 +577,7 @@ void build(Json::Value &value, const FeatureData::Feature::list &features)
 void build(Json::Value &value, const ArrayBufferView::list &geometries)
 {
     value = Json::arrayValue;
-    for (const auto geometry : geometries) {
+    for (const auto &geometry : geometries) {
         build(value.append({}), geometry);
     }
 }
