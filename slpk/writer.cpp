@@ -102,6 +102,12 @@ void build(Json::Value &value, const ResourcePatterns &resourcepatterns)
 void build(Json::Value &value, const SpatialReference &srs)
 {
     value = Json::objectValue;
+
+    if (!srs.wkt.empty()) {
+        value["wkt"] = srs.wkt;
+        return;
+    }
+
     if (srs.wkid) {
         value["wkid"] = srs.wkid;
         if (!srs.latestWkid) { value["latestWkid"] = srs.wkid; }
@@ -113,12 +119,6 @@ void build(Json::Value &value, const SpatialReference &srs)
         if (!srs.latestVcsWkid) { value["latestVcsWkid"] = srs.vcsWkid; }
     }
     if (srs.latestVcsWkid) { value["latestVcsWkid"] = srs.latestVcsWkid; }
-
-    if (!srs.wkt.empty()) {
-        value["wkt"] = srs.wkt;
-    } else if (srs.wkid) {
-        value["wkt"] = srs.srs().as(geo::SrsDefinition::Type::wkt).srs;
-    }
 }
 
 void build(Json::Value &value, const HeightModelInfo &hmi)
@@ -343,9 +343,9 @@ void build(Json::Value &value, const Metadata &metadata)
 {
     value = Json::objectValue;
     value["folderPattern"] = asString(metadata.folderPattern);
-    value["ArchiveCompressionType"]
+    value["archiveCompressionType"]
         = asString(metadata.archiveCompressionType);
-    value["ResourceCompressionType"]
+    value["resourceCompressionType"]
         = asString(metadata.resourceCompressionType);
     build(value["I3SVersion"], metadata.version);
     value["nodeCount"] = Json::UInt64(metadata.nodeCount);

@@ -159,9 +159,9 @@ Metadata loadMetadata(std::istream &in, const fs::path &path)
     try {
         Json::getOpt(metadata.folderPattern, value, "folderPattern");
         Json::getOpt(metadata.archiveCompressionType, value
-                     , "ArchiveCompressionType");
+                     , "archiveCompressionType");
         Json::getOpt(metadata.resourceCompressionType, value
-                     , "ResourceCompressionType");
+                     , "resourceCompressionType");
 
         std::string versionString;
         if (Json::getOpt(versionString, value, "I3SVersion")) {
