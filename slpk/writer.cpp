@@ -948,7 +948,7 @@ void Writer::Detail::write(Node &node, SharedResource &sharedResource
     auto &texture(textures.back());
 
     // setup texture
-    texture.atlas = true;
+    texture.atlas = false;
     texture.uvSet = "uv0";
     texture.channels = "rgb";
 

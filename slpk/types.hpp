@@ -94,7 +94,7 @@ struct Metadata {
         : folderPattern(FolderPattern::basic)
         , archiveCompressionType(ArchiveCompressionType::store)
         , resourceCompressionType(ResourceCompressionType::gzip)
-        , version({1, 6})
+        , version({1, 7})
         , nodeCount()
     {}
 };
