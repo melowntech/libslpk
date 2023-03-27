@@ -1,5 +1,5 @@
 # bump version here
-set(slpk_VERSION 1.4)
+set(slpk_VERSION 1.5)
 
 define_module(LIBRARY slpk=${slpk_VERSION}
   DEPENDS

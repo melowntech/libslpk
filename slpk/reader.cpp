@@ -816,7 +816,7 @@ struct MeshFeatures {
 namespace paa {
 
 struct CompareRegion {
-    bool operator()(const Region &r1, const Region &r2) {
+    bool operator()(const Region &r1, const Region &r2) const {
         if (r1.ll < r2.ll) { return true; }
         if (r2.ll < r1.ll) { return false; }
         return r1.ur < r2.ur;

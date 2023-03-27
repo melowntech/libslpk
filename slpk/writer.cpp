@@ -174,6 +174,7 @@ void build(Json::Value &value, const math::Matrix4 &m)
     }
 }
 
+UTILITY_MAYBE_UNUSED
 void build(Json::Value &value, const Encoding &encoding)
 {
     value = encoding.mime;
@@ -523,6 +524,7 @@ void build(Json::Value &value, const GeometryReference &geometry)
     value["lodGeometry"] = geometry.lodGeometry;
 }
 
+UTILITY_MAYBE_UNUSED
 void build(Json::Value &value, GeometryReference::list &geometries)
 {
     value = Json::arrayValue;
