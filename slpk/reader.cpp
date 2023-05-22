@@ -1750,6 +1750,34 @@ bool RestApi::changed() const
     return archive_.changed();
 }
 
+namespace {
+
+std::string ellipsoidName(const OGRSpatialReference &ref
+                          , const std::string dflt)
+{
+    const auto *root(ref.GetRoot());
+    if (!root) { return dflt; }
+
+    const auto *datum(root->GetNode("DATUM"));
+    if (!datum) { return dflt; }
+
+    if (const auto *spheroid = datum->GetNode("SPHEROID")) {
+        if (const auto *spheroid0 = spheroid->GetChild(0)) {
+            return spheroid0->GetValue();
+        }
+    }
+
+    if (const auto *ellipsoid_ = datum->GetNode("ELLIPSOID")) {
+        if (const auto *ellipsoid0 = ellipsoid_->GetChild(0)) {
+            return ellipsoid0->GetValue();
+        }
+    }
+
+    return dflt;
+}
+
+} // namespace
+
 HeightModelInfo::HeightModelInfo(const geo::SrsDefinition &srs)
     : heightModel(HeightModel::ellipsoidal)
     , ellipsoid("unnamed"), heightUnit("meter")
@@ -1759,12 +1787,7 @@ HeightModelInfo::HeightModelInfo(const geo::SrsDefinition &srs)
     const auto *root(reference.GetRoot());
     if (!root) { return; }
 
-    if (const auto *datum = root->GetNode("DATUM")) {
-        const auto *spheroid(datum->GetNode("SPHEROID"));
-        if (const auto *spheroid0 = spheroid->GetChild(0)) {
-            ellipsoid = spheroid0->GetValue();
-        }
-    }
+    ellipsoid = ellipsoidName(reference, ellipsoid);
 
     if (const auto *vertCs = root->GetNode("VERT_CS")) {
         if (const auto *vertDatum = vertCs->GetNode("VERT_DATUM")) {
