@@ -711,8 +711,7 @@ public:
                         << fa.valuesPerElement << ".";
                 }
 
-                // ID = 0
-                write(os, fa.valueType, 0);
+                write(os, fa.valueType, feature.id);
 
             } else if (fa.key == "faceRange") {
                 if (fa.valuesPerElement != 2) {
@@ -832,7 +831,7 @@ struct Writer::Detail {
            , const Metadata &metadata, const SceneLayerInfo &sli
            , bool overwrite)
         : sli(sli), gs(getGeometrySchema(this->sli)), zip(path, overwrite)
-        , metadata(metadata), nodeCount(), textureCount()
+        , metadata(metadata), nodeCount(), textureCount(), featureIdIndex(0), geometryIdIndex(0)
     {}
 
     Detail(utility::zip::Writer &&inZip
@@ -855,6 +854,8 @@ struct Writer::Detail {
 
     SceneLayerInfo sli;
     const GeometrySchema &gs;
+	int featureIdIndex;
+	int geometryIdIndex;
     utility::zip::Writer zip;
     std::mutex mutex;
     Metadata metadata;
@@ -1012,11 +1013,11 @@ void Writer::Detail::write(Node &node, SharedResource &sharedResource
     // feature stuff
     FeatureData featureData;
     {
-        auto &fd(utility::append(featureData.featureData, 0));
+        auto &fd(utility::append(featureData.featureData, featureIdIndex++));
         fd.position = node.mbs.center;
         fd.layer = "3D model";
 
-        auto &gd(utility::append(featureData.geometryData, 0));
+        auto &gd(utility::append(featureData.geometryData, geometryIdIndex++));
 
         // only per-attribute array geometry type
         saveMesh(tmp, node, meshSaver, gs, fd, gd);
