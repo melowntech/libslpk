@@ -319,15 +319,15 @@ void parse(GeometrySchema &gs, const Json::Value &value)
 
 /** Parse geometryBuffer like old geometry attributes
  */
-void parse(v17::GeometryDefinition &gd, const Json::Value &value)
+void parse(v17::GeometryBuffer16 &gb16, const Json::Value &value)
 {
     const auto &getDefinition([&](const char *in, const char *out)
     {
         if (!value.isMember(in)) { return; }
         const auto &src(value[in]);
 
-        gd.attributes.emplace_back(out);
-        auto &ga(gd.attributes.back());
+        gb16.attributes.emplace_back(out);
+        auto &ga(gb16.attributes.back());
 
         Json::get(ga.valueType, src, "type");
         Json::get(ga.valuesPerElement, src, "component");
@@ -339,6 +339,13 @@ void parse(v17::GeometryDefinition &gd, const Json::Value &value)
     getDefinition("uv1", "uv1");
     getDefinition("color", "color");
     getDefinition("uvRegion", "region");
+}
+
+void parse(v17::GeometryBuffer &gb, const Json::Value &value)
+{
+    // Hic sunt leones
+    (void) gb;
+    (void) value;
 }
 
 void parse(v17::GeometryDefinition::list &gds, const Json::Value &value)
@@ -355,13 +362,30 @@ void parse(v17::GeometryDefinition::list &gds, const Json::Value &value)
                 << "There must be at least one geometry buffer.";
         }
 
-        const auto &buffer
-            (Json::check(buffers[0]
-                         , Json::objectValue, "geometryBuffers[0]"));
+        if (buffers.size() > 2) {
+            LOGTHROW(err1, std::runtime_error)
+                << "There must be at most two geometry buffers.";
+        }
 
-        gds.emplace_back();
-        parse(gds.back(), buffer);
+        auto &definition(gds.emplace_back());
+
+        parse(definition.geometryBuffer16
+              , Json::check(buffers[0]
+                            , Json::objectValue, "geometryBuffers[0]"));
+
+        if (buffers.size() == 2) {
+            parse(definition.geometryBuffer.emplace()
+                  , Json::check(buffers[1]
+                                , Json::objectValue, "geometryBuffers[0]"));
+        }
     }
+}
+
+void parse(v17::NodePageDefinition &npd, const Json::Value &value)
+{
+    Json::getOpt(npd.lodSelectionMetricType, value, "lodSelectionMetricType");
+    Json::getOpt(npd.rootIndex, value, "rootIndex");
+    Json::get(npd.nodesPerPage, value, "nodesPerPage");
 }
 
 void parse(Encoding &encoding, const Json::Value &value, const char *key
@@ -407,8 +431,8 @@ void parse(Store &s, const Json::Value &value)
     Json::get(s.extents.ur(0), value, "extent", 2);
     Json::get(s.extents.ur(1), value, "extent", 3);
 
-    Json::get(s.indexCRS, value, "indexCRS");
-    Json::get(s.vertexCRS, value, "vertexCRS");
+    Json::getOpt(s.indexCRS, value, "indexCRS");
+    Json::getOpt(s.vertexCRS, value, "vertexCRS");
     Json::getOpt(s.normalReferenceFrame, value, "normalReferenceFrame");
 
     parse(s.nidEncoding, value, "nidEncoding");
@@ -478,6 +502,12 @@ loadSceneLayerInfo(std::istream &in, const fs::path &path)
         parse(sli.geometryDefinitions
               , Json::check(value["geometryDefinitions"]
                             , Json::arrayValue, "geometryDefinitions"));
+    }
+
+    if (value.isMember("nodePages")) {
+        parse((sli.nodePages.emplace(), *sli.nodePages)
+              , Json::check(value["nodePages"]
+                            , Json::objectValue, "nodePages"));
     }
 
     return out;
@@ -1634,7 +1664,7 @@ RestApi::RestApi(Archive &&archive)
         Json::write(os, config, false);
 
         ApiFile af;
-        af.contentType = "text/plain;charset=utf-8";
+        af.contentType = "application/json";
         af.content = os.str();
         addSlashed(constants::SceneServer, af);
     }
@@ -1660,7 +1690,7 @@ RestApi::RestApi(Archive &&archive)
         }
 
         if (ext == detail::constants::ext::json) {
-            af.contentType = "text/plain;charset=utf-8";
+            af.contentType = "application/json";
         }
 
         return af;
@@ -1670,54 +1700,29 @@ RestApi::RestApi(Archive &&archive)
         (layerPrefix, buildApiFile
          (archive_.realPath(detail::constants::SceneLayer)));
 
-    typedef std::map<std::string, fs::path> BasePathMap;
-    BasePathMap basePathMap;
     for (const auto &path : archive_.fileList()) {
-        auto fname(path.filename().string());
-        auto dot(fname.find('.'));
-        if (dot == std::string::npos) {
-            // no dot, as is
-            basePathMap.insert(BasePathMap::value_type(path.string(), path));
-            continue;
+        auto af(buildApiFile(path));
+        auto uri(layerPrefix / path);
+        if (uri.extension() == detail::constants::ext::gz) {
+            uri.replace_extension();
         }
 
-        // trim all extensions
-        basePathMap.insert
-            (BasePathMap::value_type
-             ((path.parent_path() / fname.substr(0, dot)).string(), path));
-    }
+        const auto filename(uri.filename());
+        if (filename == ".") { continue; }
 
-    const auto addResource([&](const Resource &resource) -> void
-    {
-        const auto href(resource.href);
-        auto fbasePathMap(basePathMap.find(href));
-        if (fbasePathMap == basePathMap.end()) { return; }
-
-        // compose API file
-        ApiFile af(fbasePathMap->second);
-        af.contentType = resource.encoding->mime;
-        add((layerPrefix / fbasePathMap->first).string(), buildApiFile(af));
-    });
-
-    const auto addResources([&](const Resource::list &resources)
-    {
-        for (const auto &resource : resources) { addResource(resource); }
-    });
-
-    for (const auto &ni : archive_.loadNodes()) {
-        addSlashed(layerPrefix / ni.href, buildApiFile(fs::path(ni.fullpath)));
-
-        if (ni.node.sharedResource) {
-            const fs::path path(ni.node.sharedResource->href);
-            addSlashed
-                (layerPrefix / path, buildApiFile
-                 (archive_.realPath
-                  (path / detail::constants::SharedResource)));
+        const auto ext(uri.extension());
+        if ((filename == detail::constants::NodeIndex)
+            || (filename == detail::constants::SharedResource))
+        {
+            uri = uri.parent_path();
+        } else if ((ext == ".json")
+                   || (ext == ".jpg")
+                   || (ext == ".bin"))
+        {
+            uri.replace_extension();
         }
-        addResources(ni.node.featureData);
-        addResources(ni.node.geometryData);
-        addResources(ni.node.textureData);
-        // TODO: geometry, store, etc
+
+        addSlashed(uri.string(), af);
     }
 }
 

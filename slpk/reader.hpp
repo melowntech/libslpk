@@ -211,6 +211,10 @@ public:
      */
     bool changed() const;
 
+    /** Get metadata
+     */
+    const Metadata& metadata() const { return metadata_; }
+
 private:
     roarchive::RoArchive archive_;
     Metadata metadata_;

@@ -294,14 +294,31 @@ struct GeometrySchema {
     typedef std::vector<GeometrySchema> list;
 };
 
+UTILITY_GENERATE_ENUM_CI(MetricType,
+                         ((maxScreenThreshold))
+                         ((maxScreenThresholdSQ))
+                         ((screenSpaceRelative))
+                         ((distanceRangeFromDefaultCamera))
+                         ((effectiveDensity))
+                         )
+
 namespace v17 {
 
-struct GeometryDefinition {
+struct GeometryBuffer16 {
     // attribute list; for compatibility reasons re-using geometry attributes
     GeometryAttribute::list attributes;
     std::size_t offset = 0;
+};
 
-    typedef std::vector<GeometryDefinition> list;
+struct GeometryBuffer {
+    // TODO: implement me
+};
+
+struct GeometryDefinition {
+    GeometryBuffer16 geometryBuffer16;
+    std::optional<GeometryBuffer> geometryBuffer;
+
+    using list = std::vector<GeometryDefinition>;
 };
 
 struct MeshGeometry {
@@ -320,6 +337,14 @@ struct MeshMaterial {
 struct Mesh {
     MeshMaterial material;
     MeshGeometry geometry;
+};
+
+struct NodePageDefinition {
+    // cannot be set to anything else
+    MetricType lodSelectionMetricType = MetricType::maxScreenThresholdSQ;
+
+    int rootIndex = 0;
+    int nodesPerPage = 0;
 };
 
 } // namespace v17
@@ -427,6 +452,10 @@ struct SceneLayerInfo {
      */
     v17::GeometryDefinition::list geometryDefinitions;
 
+    /** Mandatory in V 1.7
+     */
+    boost::optional<v17::NodePageDefinition> nodePages;
+
     // cachedDrawingInfo
     // drawingInfo
     // fields
@@ -484,12 +513,6 @@ struct Resource {
 
     typedef std::vector<Resource> list;
 };
-
-UTILITY_GENERATE_ENUM_CI(MetricType,
-                         ((maxScreenThreshold))
-                         ((screenSpaceRelative))
-                         ((distanceRangeFromDefaultCamera))
-                         )
 
 struct LodSelection {
     MetricType metricType;

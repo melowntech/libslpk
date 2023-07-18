@@ -48,7 +48,7 @@ struct ApiFile {
      */
     std::string transferEncoding;
 
-    /** File content. Nonempty only for service files.a
+    /** File content. Nonempty only for service files.
      */
     std::string content;
 
